@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matchup Finder</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-inner">
+        <div class="logo">
+            <span class="logo-icon">M</span>
+            <span class="logo-text">Matchup Finder</span>
+        </div>
+    </div>
+</div>
+
+<div class="main-container">
+    <!-- Search Panel -->
+    <div class="panel">
+        <div class="panel-head">
+            <span class="panel-title">Champion Matchup Search</span>
+        </div>
+        <div class="search-grid">
+            <div class="team-col">
+                <div class="team-header team-a">TEAM A</div>
+                <img class="team-img" src="/static/INF_Duoking_2018_SG.webp" alt="">
+                <div class="champ-list" id="team-a-champs">
+                    <input class="input champ-input" data-side="a" placeholder="Champion" autocomplete="off">
+                    <input class="input champ-input" data-side="a" placeholder="Champion" autocomplete="off">
+                    <input class="input champ-input" data-side="a" placeholder="Champion" autocomplete="off">
+                    <input class="input champ-input" data-side="a" placeholder="Champion" autocomplete="off">
+                    <input class="input champ-input" data-side="a" placeholder="Champion" autocomplete="off">
+                </div>
+            </div>
+            <div class="vs-divider"><span>VS</span></div>
+            <div class="team-col">
+                <div class="team-header team-b">TEAM B</div>
+                <img class="team-img" src="/static/317387ac-0fe6-4d81-a9c0-c777a79875a0-profile_image-300x300.png" alt="">
+                <div class="champ-list" id="team-b-champs">
+                    <input class="input champ-input" data-side="b" placeholder="Champion" autocomplete="off">
+                    <input class="input champ-input" data-side="b" placeholder="Champion" autocomplete="off">
+                    <input class="input champ-input" data-side="b" placeholder="Champion" autocomplete="off">
+                    <input class="input champ-input" data-side="b" placeholder="Champion" autocomplete="off">
+                    <input class="input champ-input" data-side="b" placeholder="Champion" autocomplete="off">
+                </div>
+            </div>
+        </div>
+        <div class="filter-row">
+            <div class="league-filter-wrap">
+                <span class="field-label">Leagues</span>
+                <div class="league-checkboxes" id="league-checkboxes"></div>
+            </div>
+            <div class="actions-row" style="margin-top: 18px;">
+                <button class="btn btn-accent" id="btn-search">Search</button>
+                <button class="btn btn-ghost" id="btn-clear">Clear</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="stat-row hidden" id="summary">
+        <div class="stat-card">
+            <div class="stat-label">Games Found</div>
+            <div class="stat-value" id="stat-total">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label" id="stat-a-label">Team A</div>
+            <div class="stat-value" id="stat-a-wr">0%</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label" id="stat-b-label">Team B</div>
+            <div class="stat-value" id="stat-b-wr">0%</div>
+        </div>
+    </div>
+
+    <!-- Results Table -->
+    <div class="panel hidden" id="results-panel" style="margin-top: 16px;">
+        <div class="table-scroll" style="max-height: 70vh;">
+            <table class="dtable" id="results-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>League</th>
+                        <th>Patch</th>
+                        <th class="al">Team A</th>
+                        <th class="al">Team B</th>
+                        <th>Result</th>
+                        <th>Kills</th>
+                        <th>Length</th>
+                    </tr>
+                </thead>
+                <tbody id="results-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
