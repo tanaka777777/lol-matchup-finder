@@ -5,7 +5,7 @@ from flask import Flask, render_template, request, jsonify
 app = Flask(__name__)
 
 # ── Load CSVs at startup ──
-CSV_DIR = os.path.join(os.path.dirname(__file__), '..')
+CSV_DIR = os.environ.get('DATA_DIR', os.path.join(os.path.dirname(__file__), 'data'))
 DETAIL_COLS = [
     'gameid', 'league', 'date', 'patch', 'participantid', 'side', 'position',
     'playername', 'teamname', 'champion', 'gamelength', 'result',
