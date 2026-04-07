@@ -1,3 +1,4 @@
+import math
 import os
 import pandas as pd
 from flask import Flask, render_template, request, jsonify
@@ -17,6 +18,11 @@ DETAIL_COLS = [
     'ban1', 'ban2', 'ban3', 'ban4', 'ban5',
 ]
 
+# International leagues — excluded from normalized WR (cross-league comparison too noisy)
+INTL_LEAGUES = {'MSI', 'WLDs', 'EWC', 'DCup', 'Asia Master', 'IC', 'Americas Cup'}
+
+TEAM_PRIOR = 20  # Bayesian shrinkage for team WRs
+
 
 def load_data():
     frames = []
@@ -25,7 +31,7 @@ def load_data():
         if os.path.exists(path):
             frames.append(pd.read_csv(path, encoding='utf-8', low_memory=False))
     if not frames:
-        return pd.DataFrame(), {}, [], []
+        return pd.DataFrame(), {}, [], [], {}
 
     df = pd.concat(frames, ignore_index=True)
 
@@ -71,6 +77,17 @@ def load_data():
     # Remove incomplete entries
     games_index = {k: v for k, v in games_index.items() if 'league' in v}
 
+    # Build (team, league) -> shrunk WR lookup, excluding international games
+    team_league_wr = {}
+    non_intl = teams[~teams['league'].isin(INTL_LEAGUES)]
+    for (team, league), grp in non_intl.groupby(['teamname', 'league']):
+        wins = int(grp['result'].sum())
+        total = len(grp)
+        shrunk = (wins + TEAM_PRIOR * 0.5) / (total + TEAM_PRIOR)
+        team_league_wr[(str(team), str(league))] = {
+            'wr': shrunk, 'wins': wins, 'games': total,
+        }
+
     # Extract autocomplete lists
     all_champs = sorted(players['champion'].dropna().str.strip().unique())
     all_leagues = sorted(teams['league'].dropna().str.strip().unique())
@@ -79,16 +96,28 @@ def load_data():
     keep_cols = [c for c in DETAIL_COLS if c in df.columns]
     detail_df = df[keep_cols].copy()
 
-    return detail_df, games_index, all_champs, all_leagues
+    return detail_df, games_index, all_champs, all_leagues, team_league_wr
 
 
-detail_df, games_index, all_champs, all_leagues = load_data()
+detail_df, games_index, all_champs, all_leagues, team_league_wr = load_data()
 
 
 def fmt_gamelength(seconds):
     if not seconds:
         return '0:00'
     return f'{seconds // 60}:{seconds % 60:02d}'
+
+
+def _logit(p, eps=1e-9):
+    p = max(eps, min(1 - eps, p))
+    return math.log(p / (1 - p))
+
+
+def _sigmoid(x):
+    if x >= 0:
+        return 1.0 / (1.0 + math.exp(-x))
+    ex = math.exp(x)
+    return ex / (1.0 + ex)
 
 
 # ── Routes ──
@@ -161,12 +190,49 @@ def search():
     team_a_wins = sum(1 for r in results if r['team_a_win'])
     total = len(results)
 
+    # Normalized WR: Log5 expected WR per game (per-league shrunk team WRs),
+    # then log-odds adjustment so the result is bounded 0-100%.
+    # Excludes international games (cross-league WR comparison too noisy).
+    expected_wins = 0.0
+    actual_wins_norm = 0
+    norm_total = 0
+    for r in results:
+        if r['league'] in INTL_LEAGUES:
+            continue
+        wr_a = team_league_wr.get((r['team_a_name'], r['league']), {}).get('wr')
+        wr_b = team_league_wr.get((r['team_b_name'], r['league']), {}).get('wr')
+        if wr_a is None or wr_b is None:
+            continue
+        # Log5: P(A beats B) given both WRs against common opponents
+        denom = wr_a + wr_b - 2 * wr_a * wr_b
+        if denom <= 0:
+            continue
+        p_a = (wr_a - wr_a * wr_b) / denom
+        expected_wins += p_a
+        if r['team_a_win']:
+            actual_wins_norm += 1
+        norm_total += 1
+
+    normalized_wr_a = None
+    expected_wr = None
+    actual_wr = None
+    if norm_total > 0:
+        actual_wr = actual_wins_norm / norm_total
+        expected_wr = expected_wins / norm_total
+        # Log-odds adjustment: shift actual by the bias (logit space), back to prob
+        delta = _logit(actual_wr) - _logit(expected_wr)
+        normalized_wr_a = _sigmoid(delta)
+
     return jsonify({
         'total': total,
         'team_a_wins': team_a_wins,
         'team_a_wr': round(100 * team_a_wins / total, 1) if total else 0,
         'team_a_label': ' + '.join(team_a) if team_a else 'Team A',
         'team_b_label': ' + '.join(team_b) if team_b else 'Team B',
+        'norm_total': norm_total,
+        'norm_actual_wr': round(100 * actual_wr, 1) if actual_wr is not None else None,
+        'norm_expected_wr': round(100 * expected_wr, 1) if expected_wr is not None else None,
+        'normalized_wr': round(100 * normalized_wr_a, 1) if normalized_wr_a is not None else None,
         'games': results,
     })
 

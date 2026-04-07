@@ -2,11 +2,11 @@
     'use strict';
 
     const LEAGUE_GROUPS = [
-        { label: 'Tier 1', leagues: ['LCK', 'LPL', 'LEC', 'LTA N', 'LCS'] },
-        { label: 'Tier 2', leagues: ['PCS', 'VCS', 'LCP', 'LTA', 'LJL', 'LTA S', 'CBLOL', 'TCL'] },
-        { label: 'International', leagues: ['MSI', 'WLDs', 'EWC', 'DCup', 'Asia Master', 'IC', 'Americas Cup'] },
-        { label: 'Regional', leagues: ['LFL', 'LFL2', 'LVP SL', 'PRM', 'PRMP', 'NLC', 'EM', 'AL', 'HLL', 'EBL', 'LIT', 'RL', 'ROL', 'LES', 'HM', 'HW', 'NEXO', 'CT', 'LRN', 'LRS', 'CD', 'FST', 'ASI', 'CCWS', 'LAS'] },
-        { label: 'Academy', leagues: ['LCKC', 'LPLOL', 'NACL', 'HC', 'KeSPA'] },
+        { label: 'Tier 1', leagues: ['LCK', 'LPL', 'LEC', 'LTA N', 'LCS'], defaultChecked: true },
+        { label: 'Tier 2', leagues: ['PCS', 'VCS', 'LCP', 'LTA', 'LJL', 'LTA S', 'CBLOL', 'TCL'], defaultChecked: true },
+        { label: 'International', leagues: ['MSI', 'WLDs', 'EWC', 'DCup', 'Asia Master', 'IC', 'Americas Cup'], defaultChecked: false },
+        { label: 'Regional', leagues: ['LFL', 'LFL2', 'LVP SL', 'PRM', 'PRMP', 'NLC', 'EM', 'AL', 'HLL', 'EBL', 'LIT', 'RL', 'ROL', 'LES', 'HM', 'HW', 'NEXO', 'CT', 'LRN', 'LRS', 'CD', 'FST', 'ASI', 'CCWS', 'LAS'], defaultChecked: true },
+        { label: 'Academy', leagues: ['LCKC', 'LPLOL', 'NACL', 'HC', 'KeSPA'], defaultChecked: true },
     ];
 
     const state = {
@@ -126,14 +126,15 @@
             const groupLeagues = group.leagues.filter(l => available.has(l));
             if (!groupLeagues.length) continue;
             groupLeagues.forEach(l => placed.add(l));
+            const chk = group.defaultChecked ? 'checked' : '';
             html += `<div class="league-group" data-group="${group.label}">
                 <label class="league-group-header">
-                    <input type="checkbox" class="group-toggle" checked>
+                    <input type="checkbox" class="group-toggle" ${chk}>
                     <span>${group.label}</span>
                 </label>
                 <div class="league-group-items">
                     ${groupLeagues.map(l =>
-                        `<label class="league-cb"><input type="checkbox" value="${l}" checked><span>${l}</span></label>`
+                        `<label class="league-cb"><input type="checkbox" value="${l}" ${chk}><span>${l}</span></label>`
                     ).join('')}
                 </div>
             </div>`;
@@ -251,6 +252,26 @@
         const bEl = document.getElementById('stat-b-wr');
         bEl.textContent = bWr + '%';
         bEl.className = 'stat-value ' + (bWr > 50 ? 'positive' : bWr < 50 ? 'negative' : 'neutral');
+
+        // Normalized (log-odds adjusted) WR — excludes international games
+        const normA = document.getElementById('stat-a-norm');
+        const normB = document.getElementById('stat-b-norm');
+        if (data.norm_total > 0 && data.normalized_wr !== null) {
+            const nA = data.normalized_wr;
+            const nB = Math.round((100 - nA) * 10) / 10;
+            normA.textContent = nA + '%';
+            normA.className = 'stat-value adjusted ' + (nA > 50 ? 'positive' : nA < 50 ? 'negative' : 'neutral');
+            normB.textContent = nB + '%';
+            normB.className = 'stat-value adjusted ' + (nB > 50 ? 'positive' : nB < 50 ? 'negative' : 'neutral');
+            const tip = `Adjusted for team strength (log-odds, ${data.norm_total} non-intl games). What the WR would be if both sides had equally skilled teams.`;
+            normA.title = tip;
+            normB.title = tip;
+        } else {
+            normA.textContent = '—';
+            normA.className = 'stat-value adjusted neutral';
+            normB.textContent = '—';
+            normB.className = 'stat-value adjusted neutral';
+        }
     }
 
     // ── Render Results Table ──
@@ -410,8 +431,13 @@
     // ── Clear ──
     function onClear() {
         document.querySelectorAll('.champ-input').forEach(inp => inp.value = '');
-        document.querySelectorAll('#league-checkboxes input[type="checkbox"]').forEach(cb => cb.checked = true);
-        document.querySelectorAll('#league-checkboxes .group-toggle').forEach(cb => cb.checked = true);
+        // Reset league checkboxes to default state
+        document.querySelectorAll('#league-checkboxes .league-group').forEach(group => {
+            const groupName = group.dataset.group;
+            const cfg = LEAGUE_GROUPS.find(g => g.label === groupName);
+            const def = cfg ? cfg.defaultChecked : true;
+            group.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = def);
+        });
         document.getElementById('summary').classList.add('hidden');
         document.getElementById('results-panel').classList.add('hidden');
         document.getElementById('results-body').innerHTML = '';
