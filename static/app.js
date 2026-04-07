@@ -290,13 +290,23 @@
                 <td>${g.date}</td>
                 <td>${g.league}</td>
                 <td>${g.patch}</td>
-                <td class="al">${g.team_a_name}</td>
-                <td class="al">${g.team_b_name}</td>
+                <td class="al">${g.team_a_name}${renderYearWr(g.team_a_year_wr)}</td>
+                <td class="al">${g.team_b_name}${renderYearWr(g.team_b_year_wr)}</td>
                 <td><span class="${g.team_a_win ? 'result-w' : 'result-l'}">${g.team_a_win ? 'W' : 'L'}</span></td>
                 <td>${g.total_kills}</td>
                 <td>${g.gamelength}</td>
             </tr>
         `).join('');
+    }
+
+    // Tiny WR badge shown next to each team name in the results table.
+    // Color reflects strength (>50 emerald, <50 red, =50 muted). Hidden gracefully
+    // if the team has no regional games for that year.
+    function renderYearWr(rec) {
+        if (!rec) return '';
+        const cls = rec.wr > 50 ? 'pos' : rec.wr < 50 ? 'neg' : 'neu';
+        const tip = `${rec.year} regional WR — ${rec.wins}W / ${rec.games - rec.wins}L (${rec.games} games)`;
+        return ` <span class="team-wr ${cls}" title="${tip}">${rec.wr}%</span>`;
     }
 
     // ── Expandable Detail ──

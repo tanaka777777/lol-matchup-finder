@@ -387,6 +387,17 @@ body {
 .result-w { color: var(--emerald); font-weight: 600; }
 .result-l { color: var(--red); font-weight: 600; }
 
+/* Year-WR badge next to team names in results table */
+.team-wr {
+    font-family: var(--font-data); font-size: 11px; font-weight: 600;
+    padding: 1px 6px; border-radius: 3px;
+    margin-left: 6px; vertical-align: 1px;
+    letter-spacing: -0.2px;
+}
+.team-wr.pos { color: var(--emerald); background: var(--emerald-dim); }
+.team-wr.neg { color: var(--red); background: var(--red-dim); }
+.team-wr.neu { color: var(--text-secondary); background: var(--bg-elevated); }
+
 /* ── Expanded Game Detail ── */
 .game-detail-row td {
     padding: 0 !important;

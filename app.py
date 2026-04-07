@@ -227,6 +227,29 @@ def load_data():
                 'wr': shrunk, 'wins': wins, 'games': total,
             }
 
+        # ── (team, year) → raw WR, excluding international games ──
+        # Used to display "team WR for the year of the game" next to names.
+        team_year_wr = {}
+        for team, year, total, wins in con.execute(
+            f"SELECT teamname, substr(date, 1, 4) AS yr, COUNT(*) AS n, "
+            f"COALESCE(SUM(result), 0) AS w FROM rows "
+            f"WHERE participantid IN (100, 200) "
+            f"AND teamname IS NOT NULL AND date IS NOT NULL "
+            f"AND league IS NOT NULL "
+            f"AND league NOT IN ({placeholders}) "
+            f"GROUP BY teamname, yr",
+            tuple(INTL_LEAGUES),
+        ):
+            if not year:
+                continue
+            total = int(total)
+            wins = int(wins)
+            if total <= 0:
+                continue
+            team_year_wr[(intern(str(team)), intern(str(year)))] = {
+                'wr': wins / total, 'wins': wins, 'games': total,
+            }
+
         # ── Autocomplete lists ──
         all_champs = sorted(champ_to_bit.keys())
         all_leagues = sorted({
@@ -238,10 +261,12 @@ def load_data():
     finally:
         con.close()
 
-    return games_index, all_champs, all_leagues, team_league_wr, champ_to_bit
+    return (games_index, all_champs, all_leagues, team_league_wr,
+            champ_to_bit, team_year_wr)
 
 
-games_index, all_champs, all_leagues, team_league_wr, champ_to_bit = load_data()
+(games_index, all_champs, all_leagues, team_league_wr,
+ champ_to_bit, team_year_wr) = load_data()
 
 
 def fmt_gamelength(seconds):
@@ -316,12 +341,25 @@ def search():
 
     results = []
 
+    def _wr_payload(team, year):
+        """Look up regional-only WR for (team, year). Returns dict or None."""
+        rec = team_year_wr.get((team, year))
+        if not rec:
+            return None
+        return {
+            'wr': round(100 * rec['wr'], 1),
+            'wins': rec['wins'],
+            'games': rec['games'],
+            'year': year,
+        }
+
     for gameid, g in games_index.items():
         if leagues and g.league not in leagues:
             continue
 
         blue = g.blue
         red = g.red
+        year = g.date[:4] if g.date else ''
 
         # Orientation 1: Team A = Blue, Team B = Red
         if (mask_a & blue) == mask_a and (mask_b & red) == mask_b:
@@ -336,6 +374,8 @@ def search():
                 'team_a_win': g.blue_result == 1,
                 'total_kills': g.blue_kills + g.red_kills,
                 'gamelength': fmt_gamelength(g.gamelength),
+                'team_a_year_wr': _wr_payload(g.blue_team, year),
+                'team_b_year_wr': _wr_payload(g.red_team, year),
             })
         # Orientation 2: Team A = Red, Team B = Blue
         elif (mask_a & red) == mask_a and (mask_b & blue) == mask_b:
@@ -350,6 +390,8 @@ def search():
                 'team_a_win': g.blue_result == 0,
                 'total_kills': g.blue_kills + g.red_kills,
                 'gamelength': fmt_gamelength(g.gamelength),
+                'team_a_year_wr': _wr_payload(g.red_team, year),
+                'team_b_year_wr': _wr_payload(g.blue_team, year),
             })
 
     results.sort(key=lambda x: x['date'], reverse=True)
