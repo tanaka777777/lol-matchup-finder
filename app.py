@@ -1,12 +1,27 @@
 import math
 import os
-import pandas as pd
+import sqlite3
+import sys
+from collections import namedtuple
+
 from flask import Flask, render_template, request, jsonify
+
+# pandas is intentionally NOT imported at module level. It is only needed to
+# (re)build the SQLite cache from the source CSVs, and lives behind a lazy
+# import inside `_build_sqlite`. After the cache exists, every warm boot reads
+# from SQLite via the stdlib only — pandas is never loaded into the worker,
+# saving ~27 MB of resident module code.
 
 app = Flask(__name__)
 
-# ── Load CSVs at startup ──
+# ── Configuration ──
 CSV_DIR = os.environ.get('DATA_DIR', os.path.join(os.path.dirname(__file__), 'data'))
+DB_PATH = os.path.join(CSV_DIR, 'app.db')
+CSV_FILES = [
+    '2025_LoL_esports_match_data_from_OraclesElixir.csv',
+    '2026_LoL_esports_match_data_from_OraclesElixir.csv',
+]
+
 DETAIL_COLS = [
     'gameid', 'league', 'date', 'patch', 'participantid', 'side', 'position',
     'playername', 'teamname', 'champion', 'gamelength', 'result',
@@ -18,88 +33,215 @@ DETAIL_COLS = [
     'ban1', 'ban2', 'ban3', 'ban4', 'ban5',
 ]
 
+# Minimal column set needed to build the in-memory search index
+SEARCH_COLS = [
+    'gameid', 'participantid', 'side', 'champion', 'teamname',
+    'league', 'date', 'patch', 'gamelength', 'result', 'teamkills',
+]
+
 # International leagues — excluded from normalized WR (cross-league comparison too noisy)
 INTL_LEAGUES = {'MSI', 'WLDs', 'EWC', 'DCup', 'Asia Master', 'IC', 'Americas Cup'}
 
 TEAM_PRIOR = 20  # Bayesian shrinkage for team WRs
 
+# Compact per-game record for the search index. blue/red are bitmasks over the
+# small champion palette (one bit per champion ID) — issubset becomes a single
+# bitwise AND, and each "set" is one Python int (~28 bytes) instead of a
+# frozenset of strings (~440 bytes). Strings for league/date/patch/team are
+# sys.intern'd so duplicates collapse to a single Python object.
+Game = namedtuple('Game', 'blue red league date patch blue_team red_team '
+                          'gamelength blue_result blue_kills red_kills')
+
+
+def _csv_paths():
+    paths = [os.path.join(CSV_DIR, f) for f in CSV_FILES]
+    return [p for p in paths if os.path.exists(p)]
+
+
+def _build_sqlite(csv_paths):
+    """(Re)build the SQLite cache from the source CSVs.
+
+    Lazy-imports pandas so warm boots (where the cache already exists) never
+    pay the ~27 MB pandas import cost. Writes to a .tmp file then atomically
+    renames so a crash mid-build does not leave a half-populated DB behind.
+    """
+    import pandas as pd  # noqa: PLC0415 — intentional lazy import
+
+    tmp_path = DB_PATH + '.tmp'
+    if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+
+    # Compute the union of available DETAIL_COLS across all input files so the
+    # table schema is stable even if columns differ year-over-year.
+    available = set()
+    for path in csv_paths:
+        header = pd.read_csv(path, nrows=0)
+        available.update(c for c in DETAIL_COLS if c in header.columns)
+    cols = [c for c in DETAIL_COLS if c in available]  # preserve canonical order
+
+    con = sqlite3.connect(tmp_path)
+    try:
+        for path in csv_paths:
+            header = pd.read_csv(path, nrows=0)
+            file_cols = [c for c in cols if c in header.columns]
+            for chunk in pd.read_csv(path, usecols=file_cols, chunksize=5000,
+                                     low_memory=False):
+                for c in cols:
+                    if c not in chunk.columns:
+                        chunk[c] = None
+                chunk = chunk[cols]
+                chunk.to_sql('rows', con, if_exists='append', index=False)
+        con.execute('CREATE INDEX idx_gameid ON rows(gameid)')
+        con.commit()
+    finally:
+        con.close()
+
+    if os.path.exists(DB_PATH):
+        os.remove(DB_PATH)
+    os.rename(tmp_path, DB_PATH)
+
+
+def _ensure_db(csv_paths):
+    if not csv_paths:
+        return
+    db_mtime = os.path.getmtime(DB_PATH) if os.path.exists(DB_PATH) else 0
+    csv_mtime = max(os.path.getmtime(p) for p in csv_paths)
+    if db_mtime < csv_mtime:
+        _build_sqlite(csv_paths)
+
+
+def _to_int(v):
+    if v is None:
+        return 0
+    try:
+        return int(v)
+    except (ValueError, TypeError):
+        try:
+            return int(float(v))
+        except (ValueError, TypeError):
+            return 0
+
 
 def load_data():
-    frames = []
-    for year in ['2025', '2026']:
-        path = os.path.join(CSV_DIR, f'{year}_LoL_esports_match_data_from_OraclesElixir.csv')
-        if os.path.exists(path):
-            frames.append(pd.read_csv(path, encoding='utf-8', low_memory=False))
-    if not frames:
-        return pd.DataFrame(), {}, [], [], {}
+    csv_paths = _csv_paths()
+    if not csv_paths:
+        return {}, [], [], {}, {}
 
-    df = pd.concat(frames, ignore_index=True)
+    _ensure_db(csv_paths)
 
-    players = df[df['participantid'].between(1, 10)]
-    teams = df[df['participantid'].isin([100, 200])]
+    intern = sys.intern
+    con = sqlite3.connect(DB_PATH)
+    try:
+        # ── Champion palette → bit per champion ──
+        # The full champion list (~170) fits in a single Python int per game.
+        champ_to_bit = {}
+        for (c,) in con.execute(
+            "SELECT DISTINCT champion FROM rows "
+            "WHERE participantid BETWEEN 1 AND 10 AND champion IS NOT NULL "
+            "ORDER BY champion"
+        ):
+            c = c.strip()
+            if c and c not in champ_to_bit:
+                champ_to_bit[c] = 1 << len(champ_to_bit)
 
-    # Build per-game index for fast searching
-    games_index = {}
-    for gameid, grp in players.groupby('gameid'):
-        blue = grp[grp['side'] == 'Blue']
-        red = grp[grp['side'] == 'Red']
-        blue_champs = set(blue['champion'].dropna().str.strip())
-        red_champs = set(red['champion'].dropna().str.strip())
-        if not blue_champs or not red_champs:
-            continue
-        games_index[gameid] = {
-            'blue_champs': blue_champs,
-            'red_champs': red_champs,
-        }
+        # ── Per-game champion bitmasks ──
+        # Single ordered scan, accumulate into (blue_mask, red_mask) per game.
+        raw = {}
+        for gameid, side, champ in con.execute(
+            "SELECT gameid, side, champion FROM rows "
+            "WHERE participantid BETWEEN 1 AND 10 AND champion IS NOT NULL "
+            "ORDER BY gameid"
+        ):
+            if not champ:
+                continue
+            bit = champ_to_bit.get(champ.strip())
+            if bit is None:
+                continue
+            entry = raw.get(gameid)
+            if entry is None:
+                entry = [0, 0]
+                raw[gameid] = entry
+            if side == 'Blue':
+                entry[0] |= bit
+            elif side == 'Red':
+                entry[1] |= bit
 
-    # Merge team-level data
-    for gameid, grp in teams.groupby('gameid'):
-        if gameid not in games_index:
-            continue
-        blue_t = grp[grp['participantid'] == 100]
-        red_t = grp[grp['participantid'] == 200]
-        if blue_t.empty or red_t.empty:
-            continue
-        bt = blue_t.iloc[0]
-        rt = red_t.iloc[0]
-        games_index[gameid].update({
-            'blue_team': str(bt['teamname']),
-            'red_team': str(rt['teamname']),
-            'league': str(bt['league']),
-            'date': str(bt['date']),
-            'patch': str(bt['patch']),
-            'gamelength': int(bt['gamelength']) if pd.notna(bt['gamelength']) else 0,
-            'blue_result': int(bt['result']) if pd.notna(bt['result']) else 0,
-            'blue_kills': int(bt['teamkills']) if pd.notna(bt['teamkills']) else 0,
-            'red_kills': int(rt['teamkills']) if pd.notna(rt['teamkills']) else 0,
+        # ── Team-row metadata → final games_index ──
+        games_index = {}
+        team_meta = {}  # gameid → (bt_row, rt_row)
+        for row in con.execute(
+            "SELECT gameid, participantid, teamname, league, date, patch, "
+            "gamelength, result, teamkills FROM rows "
+            "WHERE participantid IN (100, 200)"
+        ):
+            gameid, pid, teamname, league, date, patch, gl, result, tk = row
+            slot = team_meta.get(gameid)
+            if slot is None:
+                slot = [None, None]
+                team_meta[gameid] = slot
+            if pid == 100:
+                slot[0] = (teamname, league, date, patch, gl, result, tk)
+            elif pid == 200:
+                slot[1] = (teamname, league, date, patch, gl, result, tk)
+
+        for gameid, masks in raw.items():
+            blue_mask, red_mask = masks
+            if not blue_mask or not red_mask:
+                continue
+            slot = team_meta.get(gameid)
+            if not slot or slot[0] is None or slot[1] is None:
+                continue
+            bt = slot[0]
+            rt = slot[1]
+            games_index[gameid] = Game(
+                blue=blue_mask,
+                red=red_mask,
+                league=intern(str(bt[1])) if bt[1] is not None else '',
+                date=intern(str(bt[2])) if bt[2] is not None else '',
+                patch=intern(str(bt[3])) if bt[3] is not None else '',
+                blue_team=intern(str(bt[0])) if bt[0] is not None else '',
+                red_team=intern(str(rt[0])) if rt[0] is not None else '',
+                gamelength=_to_int(bt[4]),
+                blue_result=_to_int(bt[5]),
+                blue_kills=_to_int(bt[6]),
+                red_kills=_to_int(rt[6]),
+            )
+
+        # ── (team, league) → shrunk WR, excluding international games ──
+        # GROUP BY in SQL avoids any in-Python aggregation pass.
+        placeholders = ','.join('?' * len(INTL_LEAGUES))
+        team_league_wr = {}
+        for team, league, total, wins in con.execute(
+            f"SELECT teamname, league, COUNT(*) AS n, "
+            f"COALESCE(SUM(result), 0) AS w FROM rows "
+            f"WHERE participantid IN (100, 200) "
+            f"AND teamname IS NOT NULL AND league IS NOT NULL "
+            f"AND league NOT IN ({placeholders}) "
+            f"GROUP BY teamname, league",
+            tuple(INTL_LEAGUES),
+        ):
+            total = int(total)
+            wins = int(wins)
+            shrunk = (wins + TEAM_PRIOR * 0.5) / (total + TEAM_PRIOR)
+            team_league_wr[(intern(str(team)), intern(str(league)))] = {
+                'wr': shrunk, 'wins': wins, 'games': total,
+            }
+
+        # ── Autocomplete lists ──
+        all_champs = sorted(champ_to_bit.keys())
+        all_leagues = sorted({
+            intern(l.strip()) for (l,) in con.execute(
+                "SELECT DISTINCT league FROM rows "
+                "WHERE participantid IN (100, 200) AND league IS NOT NULL"
+            ) if l and l.strip()
         })
+    finally:
+        con.close()
 
-    # Remove incomplete entries
-    games_index = {k: v for k, v in games_index.items() if 'league' in v}
-
-    # Build (team, league) -> shrunk WR lookup, excluding international games
-    team_league_wr = {}
-    non_intl = teams[~teams['league'].isin(INTL_LEAGUES)]
-    for (team, league), grp in non_intl.groupby(['teamname', 'league']):
-        wins = int(grp['result'].sum())
-        total = len(grp)
-        shrunk = (wins + TEAM_PRIOR * 0.5) / (total + TEAM_PRIOR)
-        team_league_wr[(str(team), str(league))] = {
-            'wr': shrunk, 'wins': wins, 'games': total,
-        }
-
-    # Extract autocomplete lists
-    all_champs = sorted(players['champion'].dropna().str.strip().unique())
-    all_leagues = sorted(teams['league'].dropna().str.strip().unique())
-
-    # Keep slimmed df for detail endpoint
-    keep_cols = [c for c in DETAIL_COLS if c in df.columns]
-    detail_df = df[keep_cols].copy()
-
-    return detail_df, games_index, all_champs, all_leagues, team_league_wr
+    return games_index, all_champs, all_leagues, team_league_wr, champ_to_bit
 
 
-detail_df, games_index, all_champs, all_leagues, team_league_wr = load_data()
+games_index, all_champs, all_leagues, team_league_wr, champ_to_bit = load_data()
 
 
 def fmt_gamelength(seconds):
@@ -118,6 +260,21 @@ def _sigmoid(x):
         return 1.0 / (1.0 + math.exp(-x))
     ex = math.exp(x)
     return ex / (1.0 + ex)
+
+
+def _empty_search_response(team_a, team_b):
+    return {
+        'total': 0,
+        'team_a_wins': 0,
+        'team_a_wr': 0,
+        'team_a_label': ' + '.join(team_a) if team_a else 'Team A',
+        'team_b_label': ' + '.join(team_b) if team_b else 'Team B',
+        'norm_total': 0,
+        'norm_actual_wr': None,
+        'norm_expected_wr': None,
+        'normalized_wr': None,
+        'games': [],
+    }
 
 
 # ── Routes ──
@@ -145,44 +302,54 @@ def search():
     if not team_a and not team_b:
         return jsonify({'error': 'Enter at least one champion'}), 400
 
-    set_a = set(team_a)
-    set_b = set(team_b)
+    # OR each champion's bit into a single mask. Unknown name → impossible
+    # match, short-circuit to empty.
+    try:
+        mask_a = 0
+        for c in team_a:
+            mask_a |= champ_to_bit[c]
+        mask_b = 0
+        for c in team_b:
+            mask_b |= champ_to_bit[c]
+    except KeyError:
+        return jsonify(_empty_search_response(team_a, team_b))
+
     results = []
 
     for gameid, g in games_index.items():
-        if leagues and g['league'] not in leagues:
+        if leagues and g.league not in leagues:
             continue
 
-        blue = g['blue_champs']
-        red = g['red_champs']
+        blue = g.blue
+        red = g.red
 
         # Orientation 1: Team A = Blue, Team B = Red
-        if set_a.issubset(blue) and set_b.issubset(red):
+        if (mask_a & blue) == mask_a and (mask_b & red) == mask_b:
             results.append({
                 'gameid': gameid,
-                'date': g['date'][:10],
-                'league': g['league'],
-                'patch': g['patch'],
-                'team_a_name': g['blue_team'],
-                'team_b_name': g['red_team'],
+                'date': g.date[:10],
+                'league': g.league,
+                'patch': g.patch,
+                'team_a_name': g.blue_team,
+                'team_b_name': g.red_team,
                 'team_a_side': 'Blue',
-                'team_a_win': g['blue_result'] == 1,
-                'total_kills': g['blue_kills'] + g['red_kills'],
-                'gamelength': fmt_gamelength(g['gamelength']),
+                'team_a_win': g.blue_result == 1,
+                'total_kills': g.blue_kills + g.red_kills,
+                'gamelength': fmt_gamelength(g.gamelength),
             })
         # Orientation 2: Team A = Red, Team B = Blue
-        elif set_a.issubset(red) and set_b.issubset(blue):
+        elif (mask_a & red) == mask_a and (mask_b & blue) == mask_b:
             results.append({
                 'gameid': gameid,
-                'date': g['date'][:10],
-                'league': g['league'],
-                'patch': g['patch'],
-                'team_a_name': g['red_team'],
-                'team_b_name': g['blue_team'],
+                'date': g.date[:10],
+                'league': g.league,
+                'patch': g.patch,
+                'team_a_name': g.red_team,
+                'team_b_name': g.blue_team,
                 'team_a_side': 'Red',
-                'team_a_win': g['blue_result'] == 0,
-                'total_kills': g['blue_kills'] + g['red_kills'],
-                'gamelength': fmt_gamelength(g['gamelength']),
+                'team_a_win': g.blue_result == 0,
+                'total_kills': g.blue_kills + g.red_kills,
+                'gamelength': fmt_gamelength(g.gamelength),
             })
 
     results.sort(key=lambda x: x['date'], reverse=True)
@@ -239,69 +406,86 @@ def search():
 
 @app.route('/api/game/<path:gameid>')
 def game_detail(gameid):
-    rows = detail_df[detail_df['gameid'] == gameid]
-    if rows.empty:
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = con.execute(
+            'SELECT * FROM rows WHERE gameid = ?', (gameid,)
+        ).fetchall()
+    finally:
+        con.close()
+
+    if not rows:
         return jsonify({'error': 'Game not found'}), 404
+
+    available_cols = set(rows[0].keys())
 
     def safe_int(val):
         try:
-            return int(val) if pd.notna(val) else 0
+            return int(val) if val is not None else 0
         except (ValueError, TypeError):
             return 0
 
     def safe_str(val):
-        return str(val).strip() if pd.notna(val) else ''
+        return str(val).strip() if val is not None else ''
+
+    def get(row, key):
+        return row[key] if key in available_cols else None
 
     def build_side(side_rows, team_pid):
-        player_rows = side_rows[side_rows['participantid'].between(1, 10)].sort_values('participantid')
-        team_row = side_rows[side_rows['participantid'] == team_pid]
+        player_rows = sorted(
+            [r for r in side_rows
+             if r['participantid'] is not None and 1 <= r['participantid'] <= 10],
+            key=lambda r: r['participantid'],
+        )
+        team_rows = [r for r in side_rows if r['participantid'] == team_pid]
 
         players = []
-        for _, p in player_rows.iterrows():
+        for p in player_rows:
             players.append({
-                'champion': safe_str(p.get('champion', '')),
-                'position': safe_str(p.get('position', '')),
-                'player': safe_str(p.get('playername', '')),
-                'kills': safe_int(p.get('kills', 0)),
-                'deaths': safe_int(p.get('deaths', 0)),
-                'assists': safe_int(p.get('assists', 0)),
-                'cs': safe_int(p.get('total cs', 0)),
-                'gold': safe_int(p.get('totalgold', 0)),
-                'damage': safe_int(p.get('damagetochampions', 0)),
+                'champion': safe_str(get(p, 'champion')),
+                'position': safe_str(get(p, 'position')),
+                'player': safe_str(get(p, 'playername')),
+                'kills': safe_int(get(p, 'kills')),
+                'deaths': safe_int(get(p, 'deaths')),
+                'assists': safe_int(get(p, 'assists')),
+                'cs': safe_int(get(p, 'total cs')),
+                'gold': safe_int(get(p, 'totalgold')),
+                'damage': safe_int(get(p, 'damagetochampions')),
             })
 
         team_stats = {}
-        if not team_row.empty:
-            t = team_row.iloc[0]
+        if team_rows:
+            t = team_rows[0]
             team_stats = {
-                'team': safe_str(t.get('teamname', '')),
-                'result': safe_int(t.get('result', 0)),
-                'kills': safe_int(t.get('teamkills', 0)),
-                'deaths': safe_int(t.get('teamdeaths', 0)),
-                'towers': safe_int(t.get('towers', 0)),
-                'dragons': safe_int(t.get('dragons', 0)),
-                'barons': safe_int(t.get('barons', 0)),
-                'grubs': safe_int(t.get('void_grubs', 0)),
-                'atakhans': safe_int(t.get('atakhans', 0)),
-                'firstblood': safe_int(t.get('firstblood', 0)),
-                'firstdragon': safe_int(t.get('firstdragon', 0)),
-                'firstbaron': safe_int(t.get('firstbaron', 0)),
-                'firsttower': safe_int(t.get('firsttower', 0)),
-                'firstherald': safe_int(t.get('firstherald', 0)),
-                'bans': [safe_str(t.get(f'ban{i}', '')) for i in range(1, 6)],
+                'team': safe_str(get(t, 'teamname')),
+                'result': safe_int(get(t, 'result')),
+                'kills': safe_int(get(t, 'teamkills')),
+                'deaths': safe_int(get(t, 'teamdeaths')),
+                'towers': safe_int(get(t, 'towers')),
+                'dragons': safe_int(get(t, 'dragons')),
+                'barons': safe_int(get(t, 'barons')),
+                'grubs': safe_int(get(t, 'void_grubs')),
+                'atakhans': safe_int(get(t, 'atakhans')),
+                'firstblood': safe_int(get(t, 'firstblood')),
+                'firstdragon': safe_int(get(t, 'firstdragon')),
+                'firstbaron': safe_int(get(t, 'firstbaron')),
+                'firsttower': safe_int(get(t, 'firsttower')),
+                'firstherald': safe_int(get(t, 'firstherald')),
+                'bans': [safe_str(get(t, f'ban{i}')) for i in range(1, 6)],
             }
 
         return {'players': players, 'team_stats': team_stats}
 
-    blue_rows = rows[rows['side'] == 'Blue']
-    red_rows = rows[rows['side'] == 'Red']
+    blue_rows = [r for r in rows if r['side'] == 'Blue']
+    red_rows = [r for r in rows if r['side'] == 'Red']
 
     blue = build_side(blue_rows, 100)
     red = build_side(red_rows, 200)
 
     # Game length from team row
-    team_row = rows[rows['participantid'] == 100]
-    gl = safe_int(team_row.iloc[0]['gamelength']) if not team_row.empty else 0
+    team_row = [r for r in rows if r['participantid'] == 100]
+    gl = safe_int(team_row[0]['gamelength']) if team_row else 0
 
     return jsonify({
         'blue': blue,
