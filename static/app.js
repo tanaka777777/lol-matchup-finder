@@ -184,6 +184,10 @@
         return checked.length === all.length ? [] : checked;
     }
 
+    function getSelectedYears() {
+        return [...document.querySelectorAll('.year-cb:checked')].map(cb => cb.value);
+    }
+
     // ── Search ──
     async function onSearch() {
         const teamA = [], teamB = [];
@@ -211,6 +215,7 @@
                     team_a: teamA,
                     team_b: teamB,
                     leagues: getSelectedLeagues(),
+                    years: getSelectedYears(),
                 }),
             });
             const data = await resp.json();
@@ -225,6 +230,7 @@
             state.detailCache = {};
             renderSummary(data);
             renderResults(data);
+            document.getElementById('btn-discord').disabled = !data.total;
         } catch (err) {
             toast('Network error', 'error');
         } finally {
@@ -448,14 +454,74 @@
             const def = cfg ? cfg.defaultChecked : true;
             group.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = def);
         });
+        // Reset year checkboxes to default (both on)
+        document.querySelectorAll('.year-cb').forEach(cb => cb.checked = true);
         document.getElementById('summary').classList.add('hidden');
         document.getElementById('results-panel').classList.add('hidden');
         document.getElementById('results-body').innerHTML = '';
+        document.getElementById('btn-discord').disabled = true;
         state.results = null;
         state.expandedGame = null;
         state.detailCache = {};
         // Focus first input
         document.querySelector('#team-a-champs .champ-input').focus();
+    }
+
+    // ── Discord send ──
+    async function onSendDiscord() {
+        const r = state.results;
+        if (!r || !r.total) {
+            toast('Run a search first', 'error');
+            return;
+        }
+
+        const teamA = [];
+        document.querySelectorAll('#team-a-champs .champ-input').forEach(inp => {
+            if (inp.value.trim()) teamA.push(inp.value.trim());
+        });
+        const teamB = [];
+        document.querySelectorAll('#team-b-champs .champ-input').forEach(inp => {
+            if (inp.value.trim()) teamB.push(inp.value.trim());
+        });
+
+        const aWr = r.team_a_wr;
+        const bWr = Math.round((100 - aWr) * 10) / 10;
+        const aAdj = r.normalized_wr;
+        const bAdj = aAdj !== null && aAdj !== undefined
+            ? Math.round((100 - aAdj) * 10) / 10
+            : null;
+
+        const btn = document.getElementById('btn-discord');
+        const oldText = btn.textContent;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="btn-spinner"></span> Sending...';
+
+        try {
+            const resp = await fetch('/api/discord', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    team_a: teamA,
+                    team_b: teamB,
+                    total: r.total,
+                    team_a_wr: aWr,
+                    team_b_wr: bWr,
+                    team_a_adj: aAdj,
+                    team_b_adj: bAdj,
+                }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                toast(data.error || 'Failed to send', 'error');
+                return;
+            }
+            toast('Sent to Discord');
+        } catch {
+            toast('Network error', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = oldText;
+        }
     }
 
     // ── Init ──
@@ -490,6 +556,7 @@
         // Buttons
         document.getElementById('btn-search').addEventListener('click', onSearch);
         document.getElementById('btn-clear').addEventListener('click', onClear);
+        document.getElementById('btn-discord').addEventListener('click', onSendDiscord);
 
         // Enter to search (when not in autocomplete)
         document.addEventListener('keydown', (e) => {

@@ -1,7 +1,10 @@
+import json
 import math
 import os
 import sqlite3
 import sys
+import urllib.error
+import urllib.request
 from collections import namedtuple
 
 from flask import Flask, render_template, request, jsonify
@@ -323,6 +326,7 @@ def search():
     team_a = [c.strip() for c in data.get('team_a', []) if c and c.strip()]
     team_b = [c.strip() for c in data.get('team_b', []) if c and c.strip()]
     leagues = set(data.get('leagues', []))
+    years = {str(y) for y in (data.get('years') or [])}
 
     if not team_a and not team_b:
         return jsonify({'error': 'Enter at least one champion'}), 400
@@ -360,6 +364,9 @@ def search():
         blue = g.blue
         red = g.red
         year = g.date[:4] if g.date else ''
+
+        if years and year not in years:
+            continue
 
         # Orientation 1: Team A = Blue, Team B = Red
         if (mask_a & blue) == mask_a and (mask_b & red) == mask_b:
@@ -535,6 +542,65 @@ def game_detail(gameid):
         'gamelength': fmt_gamelength(gl),
         'total_kills': blue['team_stats'].get('kills', 0) + red['team_stats'].get('kills', 0),
     })
+
+
+DISCORD_CHANNEL_ID = '1472628898935341070'
+DISCORD_API_URL = (
+    f'https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages'
+)
+
+
+@app.route('/api/discord', methods=['POST'])
+def discord_post():
+    token = os.environ.get('DISCORD_BOT_TOKEN')
+    if not token:
+        return jsonify({'error': 'DISCORD_BOT_TOKEN not configured'}), 500
+
+    data = request.get_json() or {}
+    team_a = [c for c in (data.get('team_a') or []) if c]
+    team_b = [c for c in (data.get('team_b') or []) if c]
+    total = data.get('total') or 0
+    a_wr = data.get('team_a_wr')
+    b_wr = data.get('team_b_wr')
+    a_adj = data.get('team_a_adj')
+    b_adj = data.get('team_b_adj')
+
+    if not total:
+        return jsonify({'error': 'No results to send'}), 400
+
+    def fmt_pct(v):
+        return f'{v}%' if v is not None else '—'
+
+    content = (
+        f"**Matchup** · {total} games\n\n"
+        f"Team A: {', '.join(team_a) if team_a else '—'}\n"
+        f"  Raw {fmt_pct(a_wr)}  ·  Adj {fmt_pct(a_adj)}\n\n"
+        f"Team B: {', '.join(team_b) if team_b else '—'}\n"
+        f"  Raw {fmt_pct(b_wr)}  ·  Adj {fmt_pct(b_adj)}"
+    )
+
+    body = json.dumps({'content': content}).encode('utf-8')
+    req = urllib.request.Request(
+        DISCORD_API_URL,
+        data=body,
+        headers={
+            'Authorization': f'Bot {token}',
+            'Content-Type': 'application/json',
+            'User-Agent': 'matchup-finder (railway, 1.0)',
+        },
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10):
+            return jsonify({'ok': True})
+    except urllib.error.HTTPError as e:
+        try:
+            err = e.read().decode('utf-8', 'ignore')
+        except Exception:
+            err = str(e)
+        return jsonify({'error': f'Discord {e.code}: {err}'}), 502
+    except urllib.error.URLError as e:
+        return jsonify({'error': f'Network error: {e.reason}'}), 502
 
 
 if __name__ == '__main__':
