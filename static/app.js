@@ -2,11 +2,12 @@
     'use strict';
 
     const LEAGUE_GROUPS = [
-        { label: 'Tier 1', leagues: ['LCK', 'LPL', 'LEC', 'LTA N', 'LCS'], defaultChecked: true },
-        { label: 'Tier 2', leagues: ['PCS', 'VCS', 'LCP', 'LTA', 'LJL', 'LTA S', 'CBLOL', 'TCL'], defaultChecked: true },
+        { label: 'Tier 1', leagues: ['LCK', 'LPL', 'LEC', 'LTA N', 'LCS', 'LTA'], defaultChecked: true },
+        { label: 'Academy', leagues: ['LCKC', 'LPLOL', 'KeSPA'], defaultChecked: true },
+        { label: 'Tier 2', leagues: ['PCS', 'VCS', 'LCP', 'LJL', 'LTA S', 'CBLOL', 'TCL'], defaultChecked: true },
+        { label: 'Regional', leagues: ['LFL', 'PRM', 'NLC', 'LVP SL', 'EM', 'LAS', 'NACL'], defaultChecked: true },
+        { label: 'Junk', leagues: ['LFL2', 'PRMP', 'AL', 'HLL', 'EBL', 'LIT', 'RL', 'ROL', 'LES', 'HM', 'HW', 'NEXO', 'CT', 'LRN', 'LRS', 'CD', 'FST', 'ASI', 'CCWS'], defaultChecked: false },
         { label: 'International', leagues: ['MSI', 'WLDs', 'EWC', 'DCup', 'Asia Master', 'IC', 'Americas Cup'], defaultChecked: false },
-        { label: 'Regional', leagues: ['LFL', 'LFL2', 'LVP SL', 'PRM', 'PRMP', 'NLC', 'EM', 'AL', 'HLL', 'EBL', 'LIT', 'RL', 'ROL', 'LES', 'HM', 'HW', 'NEXO', 'CT', 'LRN', 'LRS', 'CD', 'FST', 'ASI', 'CCWS', 'LAS'], defaultChecked: true },
-        { label: 'Academy', leagues: ['LCKC', 'LPLOL', 'NACL', 'HC', 'KeSPA'], defaultChecked: true },
     ];
 
     const state = {
