@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile app.py)",
+      "Bash(git reset *)",
+      "Bash(rm data/app.db)",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from app import _build_sqlite, _csv_paths; _build_sqlite\\(_csv_paths\\(\\)\\); print\\('built'\\)\")",
+      "Bash(python -c \"import sqlite3; con=sqlite3.connect\\('data/app.db'\\); print\\(con.execute\\('SELECT MAX\\(date\\) FROM rows'\\).fetchone\\(\\)\\)\")",
+      "Bash(git add *)"
+    ]
+  }
+}
