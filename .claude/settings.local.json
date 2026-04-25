@@ -6,7 +6,17 @@
       "Bash(rm data/app.db)",
       "Bash(python -c \"import sys; sys.path.insert\\(0, '.'\\); from app import _build_sqlite, _csv_paths; _build_sqlite\\(_csv_paths\\(\\)\\); print\\('built'\\)\")",
       "Bash(python -c \"import sqlite3; con=sqlite3.connect\\('data/app.db'\\); print\\(con.execute\\('SELECT MAX\\(date\\) FROM rows'\\).fetchone\\(\\)\\)\")",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(PYTHONIOENCODING=utf-8 python *)",
+      "Bash(curl -s http://localhost:5000/ -o /dev/null -w \"Index: HTTP %{http_code}\\\\n\")",
+      "Bash(curl -s -X POST http://localhost:5000/api/champion-scaling -H \"Content-Type: application/json\" -d '{\"leagues\":[\"LCK\",\"LPL\",\"LEC\",\"LCS\"],\"years\":[\"2026\"]}' -o /dev/null -w \"Scaling: HTTP %{http_code}\\\\n\")",
+      "Bash(curl -s -X POST http://localhost:5000/api/champion-scaling -H \"Content-Type: application/json\" -d '{\"leagues\":[\"LCK\",\"LPL\",\"LEC\",\"LCS\",\"PCS\",\"VCS\",\"LCP\",\"LTA N\",\"LTA\",\"LJL\"],\"years\":[\"2025\",\"2026\"]}')",
+      "Bash(python -c ' *)",
+      "Bash(curl -s http://localhost:5000/)",
+      "Bash(curl -s http://localhost:5000/static/app.js)",
+      "Bash(curl *)"
     ]
   }
 }

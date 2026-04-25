@@ -525,6 +525,209 @@
         }
     }
 
+    // ══════════════════════════════════════════════════════════
+    //  Scaling tab
+    // ══════════════════════════════════════════════════════════
+
+    const scalingState = {
+        data: null,
+        sortKey: 'delta',
+        sortDir: 'desc',
+        initialized: false,
+    };
+
+    // Parallel league filter — separate from the matchup one so the user can
+    // look at scaling under a different league set than they're searching with.
+    function setupScalingLeagueFilter() {
+        const container = document.getElementById('scaling-league-checkboxes');
+        const available = new Set(state.ac ? state.ac.leagues : []);
+        const placed = new Set();
+
+        let html = '';
+        for (const group of LEAGUE_GROUPS) {
+            const groupLeagues = group.leagues.filter(l => available.has(l));
+            if (!groupLeagues.length) continue;
+            groupLeagues.forEach(l => placed.add(l));
+            const chk = group.defaultChecked ? 'checked' : '';
+            html += `<div class="league-group" data-group="${group.label}">
+                <label class="league-group-header">
+                    <input type="checkbox" class="group-toggle" ${chk}>
+                    <span>${group.label}</span>
+                </label>
+                <div class="league-group-items">
+                    ${groupLeagues.map(l =>
+                        `<label class="league-cb"><input type="checkbox" value="${l}" ${chk}><span>${l}</span></label>`
+                    ).join('')}
+                </div>
+            </div>`;
+        }
+        const leftover = [...available].filter(l => !placed.has(l)).sort();
+        if (leftover.length) {
+            html += `<div class="league-group" data-group="Other">
+                <label class="league-group-header">
+                    <input type="checkbox" class="group-toggle" checked>
+                    <span>Other</span>
+                </label>
+                <div class="league-group-items">
+                    ${leftover.map(l =>
+                        `<label class="league-cb"><input type="checkbox" value="${l}" checked><span>${l}</span></label>`
+                    ).join('')}
+                </div>
+            </div>`;
+        }
+        container.innerHTML = html;
+
+        container.addEventListener('change', (e) => {
+            if (e.target.classList.contains('group-toggle')) {
+                const group = e.target.closest('.league-group');
+                group.querySelectorAll('.league-group-items input[type="checkbox"]').forEach(
+                    cb => cb.checked = e.target.checked
+                );
+            } else {
+                const group = e.target.closest('.league-group');
+                if (group) {
+                    const boxes = group.querySelectorAll('.league-group-items input[type="checkbox"]');
+                    const allChecked = [...boxes].every(cb => cb.checked);
+                    group.querySelector('.group-toggle').checked = allChecked;
+                }
+            }
+        });
+    }
+
+    function getScalingLeagues() {
+        return [...document.querySelectorAll('#scaling-league-checkboxes .league-group-items input[type="checkbox"]:checked')]
+            .map(cb => cb.value);
+    }
+
+    function getScalingYears() {
+        return [...document.querySelectorAll('.scaling-year-cb:checked')].map(cb => cb.value);
+    }
+
+    async function fetchScaling() {
+        const leagues = getScalingLeagues();
+        if (!leagues.length) {
+            toast('Select at least one league', 'error');
+            return;
+        }
+        const btn = document.getElementById('scaling-refresh');
+        const old = btn.textContent;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="btn-spinner"></span> Loading...';
+        try {
+            const resp = await fetch('/api/champion-scaling', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ leagues, years: getScalingYears() }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                toast(data.error || 'Failed', 'error');
+                return;
+            }
+            scalingState.data = data;
+            renderScaling();
+        } catch {
+            toast('Network error', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = old;
+        }
+    }
+
+    function renderScaling() {
+        const data = scalingState.data;
+        if (!data) return;
+
+        document.getElementById('scaling-meta').textContent =
+            `${data.n_games_total.toLocaleString()} player-rows  ·  p25=${data.p25_min}min  ·  p75=${data.p75_min}min`;
+        document.getElementById('th-wr-p25').textContent = `WR @ ${data.p25_min}m`;
+        document.getElementById('th-wr-p75').textContent = `WR @ ${data.p75_min}m`;
+
+        const search = document.getElementById('scaling-search').value.trim().toLowerCase();
+        const minN = document.getElementById('scaling-min-n').checked;
+
+        let rows = data.champions;
+        if (search) rows = rows.filter(c => c.champion.toLowerCase().includes(search));
+        if (minN) rows = rows.filter(c => c.n >= 100);
+
+        const key = scalingState.sortKey;
+        const dir = scalingState.sortDir === 'asc' ? 1 : -1;
+        rows = [...rows].sort((a, b) => {
+            const av = a[key], bv = b[key];
+            if (av === null && bv === null) return 0;
+            if (av === null) return 1;   // nulls always last
+            if (bv === null) return -1;
+            if (typeof av === 'string') return av.localeCompare(bv) * dir;
+            return (av - bv) * dir;
+        });
+
+        const tbody = document.getElementById('scaling-body');
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="padding: 24px; color: var(--text-muted);">No champions match</td></tr>';
+        } else {
+            tbody.innerHTML = rows.map(c => {
+                const dCls = c.delta === null ? 'dim' : c.delta > 0 ? 'delta-pos' : c.delta < 0 ? 'delta-neg' : '';
+                const sCls = c.slope === null ? 'dim' : c.slope > 0 ? 'delta-pos' : c.slope < 0 ? 'delta-neg' : '';
+                const fmtSigned = (v, d) => v === null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d);
+                const fmtPct = v => v === null ? '—' : v.toFixed(1) + '%';
+                return `<tr>
+                    <td class="al">${c.champion}</td>
+                    <td>${c.n}</td>
+                    <td>${c.wr.toFixed(1)}%</td>
+                    <td>${fmtPct(c.wr_p25)}</td>
+                    <td>${fmtPct(c.wr_p75)}</td>
+                    <td class="${dCls}">${fmtSigned(c.delta, 1)}</td>
+                    <td class="${sCls}">${fmtSigned(c.slope, 2)}</td>
+                    <td>${c.pvalue === null ? '—' : c.pvalue.toFixed(3)}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        document.querySelectorAll('.scaling-table thead th').forEach(th => {
+            th.classList.remove('sort-active', 'asc');
+            if (th.dataset.sort === key) {
+                th.classList.add('sort-active');
+                if (scalingState.sortDir === 'asc') th.classList.add('asc');
+            }
+        });
+    }
+
+    function setupScalingTab() {
+        setupScalingLeagueFilter();
+        document.getElementById('scaling-refresh').addEventListener('click', fetchScaling);
+        document.getElementById('scaling-search').addEventListener('input', renderScaling);
+        document.getElementById('scaling-min-n').addEventListener('change', renderScaling);
+
+        document.querySelectorAll('.scaling-table thead th[data-sort]').forEach(th => {
+            th.addEventListener('click', () => {
+                const key = th.dataset.sort;
+                if (scalingState.sortKey === key) {
+                    scalingState.sortDir = scalingState.sortDir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    scalingState.sortKey = key;
+                    // String columns default ascending; numeric default descending.
+                    scalingState.sortDir = (key === 'champion') ? 'asc' : 'desc';
+                }
+                renderScaling();
+            });
+        });
+    }
+
+    function setupTabs() {
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tab = btn.dataset.tab;
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+                document.querySelector('.view-matchup').classList.toggle('hidden', tab !== 'matchup');
+                document.querySelector('.view-scaling').classList.toggle('hidden', tab !== 'scaling');
+                if (tab === 'scaling' && !scalingState.initialized) {
+                    scalingState.initialized = true;
+                    fetchScaling();
+                }
+            });
+        });
+    }
+
     // ── Init ──
     async function init() {
         // Load autocomplete data
@@ -553,6 +756,10 @@
 
         // Setup league filter
         setupLeagueFilter();
+
+        // Setup tab nav and Scaling tab (lazy-fetches on first activation)
+        setupTabs();
+        setupScalingTab();
 
         // Buttons
         document.getElementById('btn-search').addEventListener('click', onSearch);

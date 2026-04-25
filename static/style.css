@@ -82,6 +82,50 @@ body {
     color: var(--text); letter-spacing: -0.3px;
 }
 
+/* ── Tab Nav ── */
+.tab-nav { display: flex; gap: 4px; margin-left: 24px; }
+
+.tab-btn {
+    font-family: var(--font-ui); font-size: 13px; font-weight: 600;
+    color: var(--text-secondary); background: transparent;
+    border: none; border-radius: var(--radius-sm);
+    padding: 8px 14px; cursor: pointer;
+    transition: color 0.12s, background 0.12s;
+}
+
+.tab-btn:hover { color: var(--text); background: var(--bg-hover); }
+
+.tab-btn.active {
+    color: var(--cyan); background: var(--cyan-dim);
+}
+
+.panel-meta {
+    font-family: var(--font-data); font-size: 11px;
+    color: var(--text-muted); letter-spacing: 0;
+}
+
+/* ── Scaling table ── */
+.scaling-table thead th {
+    cursor: pointer; user-select: none;
+}
+.scaling-table thead th:hover { color: var(--text); }
+.scaling-table thead th.sort-active {
+    color: var(--cyan);
+}
+.scaling-table thead th.sort-active::after {
+    content: ' \25BC'; font-size: 9px; opacity: 0.7;
+}
+.scaling-table thead th.sort-active.asc::after {
+    content: ' \25B2';
+}
+
+.scaling-table tbody td.delta-pos { color: var(--emerald); font-weight: 600; }
+.scaling-table tbody td.delta-neg { color: var(--red); font-weight: 600; }
+.scaling-table tbody td.dim { color: var(--text-muted); }
+.scaling-table tbody tr.insig td { opacity: 0.55; }
+.scaling-table tbody tr { cursor: default; }
+.scaling-table tbody tr:hover { background: var(--bg-hover); }
+
 /* ── Main ── */
 .main-container { max-width: 1100px; margin: 0 auto; padding: 20px 24px 40px; }
 

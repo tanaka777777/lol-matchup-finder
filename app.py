@@ -544,6 +544,108 @@ def game_detail(gameid):
     })
 
 
+@app.route('/api/champion-scaling', methods=['POST'])
+def champion_scaling():
+    data = request.get_json() or {}
+    leagues = [l for l in (data.get('leagues') or []) if l]
+    years = {str(y) for y in (data.get('years') or [])}
+
+    if not leagues:
+        return jsonify({'error': 'Select at least one league'}), 400
+
+    sql_params = list(leagues)
+    league_ph = ','.join('?' * len(leagues))
+    sql = (
+        "SELECT champion, gamelength, result FROM rows "
+        "WHERE participantid BETWEEN 1 AND 10 "
+        "AND champion IS NOT NULL AND champion != '' "
+        "AND gamelength IS NOT NULL AND gamelength > 0 "
+        "AND result IS NOT NULL "
+        f"AND league IN ({league_ph})"
+    )
+    if years:
+        year_ph = ','.join('?' * len(years))
+        sql += f" AND substr(date, 1, 4) IN ({year_ph})"
+        sql_params.extend(years)
+
+    con = sqlite3.connect(DB_PATH)
+    try:
+        rows = con.execute(sql, sql_params).fetchall()
+    finally:
+        con.close()
+
+    if not rows:
+        return jsonify({'error': 'No data for selected filters'}), 400
+
+    # Game-length percentiles in MINUTES, computed over the filtered slice so
+    # the WR-anchor points always reflect what the user is looking at.
+    gls = sorted(float(r[1]) / 60.0 for r in rows)
+    n_total = len(gls)
+    p25_min = gls[int(n_total * 0.25)]
+    p75_min = gls[int(n_total * 0.75)]
+
+    by_champ = {}
+    for champ, gl_sec, result in rows:
+        try:
+            gl_min = float(gl_sec) / 60.0
+            r = int(result)
+        except (TypeError, ValueError):
+            continue
+        bucket = by_champ.get(champ)
+        if bucket is None:
+            bucket = []
+            by_champ[champ] = bucket
+        bucket.append((gl_min, r))
+
+    MIN_N = 30  # below this the OLS slope SE is too unstable to report
+    out = []
+    for champ, pts in by_champ.items():
+        n = len(pts)
+        wr = sum(y for _, y in pts) / n
+        entry = {
+            'champion': champ,
+            'n': n,
+            'wr': round(100 * wr, 1),
+            'wr_p25': None, 'wr_p75': None,
+            'delta': None, 'slope': None, 'pvalue': None,
+        }
+        if n >= MIN_N:
+            # OLS regression: result ~ gamelength_min
+            x_mean = sum(x for x, _ in pts) / n
+            y_mean = wr
+            sxx = sum((x - x_mean) ** 2 for x, _ in pts)
+            sxy = sum((x - x_mean) * (y - y_mean) for x, y in pts)
+            if sxx > 0:
+                slope = sxy / sxx
+                intercept = y_mean - slope * x_mean
+                ssr = sum((y - (intercept + slope * x)) ** 2 for x, y in pts)
+                rv = ssr / (n - 2)
+                if rv > 0:
+                    se = math.sqrt(rv / sxx)
+                    t = slope / se if se > 0 else 0.0
+                    # Normal approx for the t-test (df = n-2 ≥ 28 → close enough)
+                    p_val = 2.0 * (1.0 - 0.5 * (1.0 + math.erf(abs(t) / math.sqrt(2.0))))
+                else:
+                    p_val = 0.0
+                wr_p25 = max(0.0, min(1.0, intercept + slope * p25_min))
+                wr_p75 = max(0.0, min(1.0, intercept + slope * p75_min))
+                entry.update({
+                    'wr_p25': round(100 * wr_p25, 1),
+                    'wr_p75': round(100 * wr_p75, 1),
+                    'delta': round(100 * (wr_p75 - wr_p25), 1),
+                    'slope': round(100 * slope, 2),  # WR-points per minute
+                    'pvalue': round(p_val, 4),
+                })
+        out.append(entry)
+
+    return jsonify({
+        'champions': out,
+        'p25_min': round(p25_min, 1),
+        'p75_min': round(p75_min, 1),
+        'n_games_total': n_total,
+    })
+
+
 DISCORD_CHANNEL_ID = '1472628898935341070'
 DISCORD_API_URL = (
     f'https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages'

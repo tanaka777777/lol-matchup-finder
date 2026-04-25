@@ -17,10 +17,14 @@
             <span class="logo-icon">M</span>
             <span class="logo-text">Matchup Finder</span>
         </div>
+        <nav class="tab-nav">
+            <button class="tab-btn active" data-tab="matchup">Matchup</button>
+            <button class="tab-btn" data-tab="scaling">Scaling</button>
+        </nav>
     </div>
 </div>
 
-<div class="main-container">
+<div class="main-container view-matchup">
     <!-- Search Panel -->
     <div class="panel">
         <div class="panel-head">
@@ -118,6 +122,57 @@
                     </tr>
                 </thead>
                 <tbody id="results-body"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- ── Scaling view ── -->
+<div class="main-container view-scaling hidden">
+    <div class="panel">
+        <div class="panel-head">
+            <span class="panel-title">Champion Scaling — WR vs Game Length</span>
+            <span class="panel-meta" id="scaling-meta">—</span>
+        </div>
+        <div class="filter-row">
+            <div class="year-filter-wrap">
+                <span class="field-label">Year</span>
+                <div class="year-checkboxes">
+                    <label class="league-cb"><input type="checkbox" class="scaling-year-cb" value="2025" checked><span>2025</span></label>
+                    <label class="league-cb"><input type="checkbox" class="scaling-year-cb" value="2026" checked><span>2026</span></label>
+                </div>
+            </div>
+            <div class="league-filter-wrap">
+                <span class="field-label">Leagues</span>
+                <div class="league-checkboxes" id="scaling-league-checkboxes"></div>
+            </div>
+            <div class="actions-row" style="margin-top: 18px; display: flex; flex-direction: column; gap: 10px;">
+                <input class="input" id="scaling-search" placeholder="Search champion…" autocomplete="off" style="min-width: 200px;">
+                <label class="league-cb" style="white-space: nowrap;">
+                    <input type="checkbox" id="scaling-min-n" checked>
+                    <span>Only champs with ≥100 games</span>
+                </label>
+                <button class="btn btn-accent" id="scaling-refresh">Refresh</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel" id="scaling-panel" style="margin-top: 16px;">
+        <div class="table-scroll" style="max-height: 75vh;">
+            <table class="dtable scaling-table" id="scaling-table">
+                <thead>
+                    <tr>
+                        <th class="al" data-sort="champion">Champion</th>
+                        <th data-sort="n">N</th>
+                        <th data-sort="wr">WR</th>
+                        <th data-sort="wr_p25" id="th-wr-p25">WR @ p25</th>
+                        <th data-sort="wr_p75" id="th-wr-p75">WR @ p75</th>
+                        <th data-sort="delta" class="sort-active">Δ</th>
+                        <th data-sort="slope">Slope (%/min)</th>
+                        <th data-sort="pvalue">p</th>
+                    </tr>
+                </thead>
+                <tbody id="scaling-body"></tbody>
             </table>
         </div>
     </div>
