@@ -200,6 +200,36 @@
             <div class="scaling-tooltip" id="scaling-tooltip"></div>
         </div>
     </div>
+
+    <div class="panel" id="scaling-pick-panel" style="margin-top: 16px;">
+        <div class="panel-head">
+            <span class="panel-title">Plot Specific Matchup</span>
+            <button class="btn btn-ghost" id="scaling-pick-clear" style="padding: 4px 12px; font-size: 12px;">Clear</button>
+        </div>
+        <div class="scaling-pick-grid">
+            <div class="scaling-pick-col scaling-pick-blue">
+                <div class="team-header team-a">BLUE TEAM</div>
+                <div id="scaling-pick-blue-inputs">
+                    <input class="input scaling-pick-input" data-side="blue" placeholder="Champion" autocomplete="off">
+                    <input class="input scaling-pick-input" data-side="blue" placeholder="Champion" autocomplete="off">
+                    <input class="input scaling-pick-input" data-side="blue" placeholder="Champion" autocomplete="off">
+                    <input class="input scaling-pick-input" data-side="blue" placeholder="Champion" autocomplete="off">
+                    <input class="input scaling-pick-input" data-side="blue" placeholder="Champion" autocomplete="off">
+                </div>
+            </div>
+            <div class="scaling-pick-col scaling-pick-red">
+                <div class="team-header team-b">RED TEAM</div>
+                <div id="scaling-pick-red-inputs">
+                    <input class="input scaling-pick-input" data-side="red" placeholder="Champion" autocomplete="off">
+                    <input class="input scaling-pick-input" data-side="red" placeholder="Champion" autocomplete="off">
+                    <input class="input scaling-pick-input" data-side="red" placeholder="Champion" autocomplete="off">
+                    <input class="input scaling-pick-input" data-side="red" placeholder="Champion" autocomplete="off">
+                    <input class="input scaling-pick-input" data-side="red" placeholder="Champion" autocomplete="off">
+                </div>
+            </div>
+        </div>
+        <div class="scaling-pick-hint">When any champion is entered, the chart above plots only the picked champs, colored by team.</div>
+    </div>
 </div>
 
 <div class="toast" id="toast"></div>

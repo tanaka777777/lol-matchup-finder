@@ -241,6 +241,31 @@ body {
     color: var(--text); font-weight: 600;
 }
 
+/* ── Matchup picker (under the chart) ── */
+.scaling-pick-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 24px; padding: 18px;
+}
+
+.scaling-pick-col { display: flex; flex-direction: column; gap: 8px; }
+
+.scaling-pick-col .team-header { margin-bottom: 8px; }
+
+.scaling-pick-input { font-family: var(--font-ui); }
+
+.scaling-pick-hint {
+    padding: 0 18px 16px;
+    font-size: 11px; color: var(--text-muted);
+    font-style: italic;
+}
+
+#scaling-chart .matchup-label {
+    font-family: var(--font-ui); font-size: 11px; font-weight: 700;
+    pointer-events: none;
+}
+#scaling-chart .dot.team-blue { stroke: var(--blue-side); stroke-width: 2; }
+#scaling-chart .dot.team-red  { stroke: var(--red-side); stroke-width: 2; }
+
 /* ── Main ── */
 .main-container { max-width: 1100px; margin: 0 auto; padding: 20px 24px 40px; }
 

@@ -74,7 +74,13 @@
 
         input.addEventListener('keydown', (e) => {
             if (!dd.classList.contains('open')) {
-                if (e.key === 'Enter') { e.preventDefault(); document.getElementById('btn-search').click(); }
+                // Only fire matchup search when the input is actually a matchup
+                // champ-input — scaling pickers and other consumers shouldn't
+                // trigger an unrelated search.
+                if (e.key === 'Enter' && input.classList.contains('champ-input')) {
+                    e.preventDefault();
+                    document.getElementById('btn-search').click();
+                }
                 return;
             }
             if (e.key === 'ArrowDown') {
@@ -710,18 +716,44 @@
         renderScalingChart(rows);
     }
 
-    // ── Scatter: slope (x) vs WR (y), colored by role, sized by N ──
-    // Renders the SAME post-filter rows as the table so user controls (role,
-    // search, min-N) drive both views in lockstep.
+    // Read the matchup picker. Returns [] when nothing is picked.
+    // Each entry: { champ: <data row>, side: 'blue'|'red' }. Picks bypass the
+    // role/search/min-N filters — explicit picks always show.
+    function getMatchupPicks() {
+        if (!scalingState.data) return [];
+        const byName = new Map(scalingState.data.champions.map(c => [c.champion.toLowerCase(), c]));
+        const picks = [];
+        document.querySelectorAll('.scaling-pick-input').forEach(inp => {
+            const v = inp.value.trim();
+            if (!v) return;
+            const c = byName.get(v.toLowerCase());
+            if (c && c.slope !== null && c.wr !== null) {
+                picks.push({ champ: c, side: inp.dataset.side });
+            }
+        });
+        return picks;
+    }
+
+    // ── Scatter: slope (x) vs WR (y), colored by role (or by team in matchup
+    // mode), sized by N. Renders the same post-filter rows as the table so
+    // role/search/min-N drive both views in lockstep — UNLESS the matchup
+    // picker has any champs entered, in which case it plots only those.
     function renderScalingChart(rows) {
         const svg = document.getElementById('scaling-chart');
         const tooltip = document.getElementById('scaling-tooltip');
         const meta = document.getElementById('scaling-chart-count');
 
-        // Plot only champs with a fitted slope. Sometimes N>=100 but the OLS
-        // returned null (degenerate variance) — skip those silently.
-        const plottable = rows.filter(r => r.slope !== null && r.wr !== null);
-        meta.textContent = `${plottable.length} champ${plottable.length === 1 ? '' : 's'} plotted`;
+        const picks = getMatchupPicks();
+        const matchupMode = picks.length > 0;
+
+        // In matchup mode, the data points are the picks (with a side); otherwise
+        // every filtered champ. Keep a uniform shape: { c, side }.
+        const plottable = matchupMode
+            ? picks
+            : rows.filter(r => r.slope !== null && r.wr !== null).map(c => ({ champ: c, side: null }));
+        meta.textContent = matchupMode
+            ? `Matchup mode — ${picks.length} champ${picks.length === 1 ? '' : 's'} picked`
+            : `${plottable.length} champ${plottable.length === 1 ? '' : 's'} plotted`;
 
         const W = 880, H = 480;
         const M = { top: 24, right: 28, bottom: 56, left: 64 };
@@ -734,8 +766,8 @@
         }
 
         // Symmetric x-domain around 0 so neutral=center; padded slightly.
-        const slopes = plottable.map(r => r.slope);
-        const wrs = plottable.map(r => r.wr);
+        const slopes = plottable.map(p => p.champ.slope);
+        const wrs = plottable.map(p => p.champ.wr);
         const sMax = Math.max(0.5, ...slopes.map(Math.abs)) * 1.1;
         const xMin = -sMax, xMax = sMax;
         // Y-domain: WR range with padding, but always include 50%.
@@ -805,30 +837,54 @@
             parts.push(`<text class="quad-label" x="${M.left + 6}" y="${M.top + innerH - 6}">↙ STRUGGLING</text>`);
         }
 
-        // Sort dots by N ascending so big dots paint on top of small ones
-        const sorted = [...plottable].sort((a, b) => a.n - b.n);
-        for (const c of sorted) {
+        // Sort dots by N ascending so big dots paint on top of small ones.
+        // In matchup mode keep insertion order (which already follows team grouping).
+        const sorted = matchupMode
+            ? plottable
+            : [...plottable].sort((a, b) => a.champ.n - b.champ.n);
+        for (const p of sorted) {
+            const c = p.champ;
             const cx = x(c.slope), cy = y(c.wr), rad = r(c.n);
-            const fill = ROLE_COLOR[c.role] || '#888';
+            // In matchup mode, color by team; otherwise by role.
+            const fill = matchupMode
+                ? (p.side === 'blue' ? '#60a5fa' : '#fb7185')
+                : (ROLE_COLOR[c.role] || '#888');
+            const teamCls = matchupMode ? ` team-${p.side}` : '';
+            // Slightly bigger dots in matchup mode (only 10 of them, can afford it)
+            const r2 = matchupMode ? Math.max(rad, 7) : rad;
             parts.push(
-                `<circle class="dot" data-champ="${c.champion.replace(/"/g, '&quot;')}" ` +
-                `cx="${cx}" cy="${cy}" r="${rad}" fill="${fill}" fill-opacity="0.78"/>`
+                `<circle class="dot${teamCls}" data-champ="${c.champion.replace(/"/g, '&quot;')}" ` +
+                `cx="${cx}" cy="${cy}" r="${r2}" fill="${fill}" fill-opacity="0.85"/>`
             );
         }
 
-        // Auto-label the most extreme champs (top 3 each direction by |delta|)
-        // — only if there's room. Keeps the chart readable without manually
-        // searching for every name.
+        // Labels: in matchup mode, label every champ (only 10, plenty of room).
+        // Otherwise label the most extreme champs by |delta| so the chart still
+        // reads at a glance without manually searching for names.
+        const labelTargets = matchupMode
+            ? plottable
+            : (() => {
+                const sortedByDelta = [...plottable].sort((a, b) => b.champ.delta - a.champ.delta);
+                return [...sortedByDelta.slice(0, 3), ...sortedByDelta.slice(-3)];
+            })();
         const labeled = new Set();
-        const sortedByDelta = [...plottable].sort((a, b) => b.delta - a.delta);
-        const extremes = [...sortedByDelta.slice(0, 3), ...sortedByDelta.slice(-3)];
-        for (const c of extremes) {
-            if (labeled.has(c.champion)) continue;
-            labeled.add(c.champion);
+        for (const p of labelTargets) {
+            const c = p.champ;
+            const key = c.champion + '|' + (p.side || '');
+            if (labeled.has(key)) continue;
+            labeled.add(key);
             const cx = x(c.slope), cy = y(c.wr), rad = r(c.n);
-            const tx = c.slope >= 0 ? cx + rad + 4 : cx - rad - 4;
+            const r2 = matchupMode ? Math.max(rad, 7) : rad;
+            const tx = c.slope >= 0 ? cx + r2 + 4 : cx - r2 - 4;
             const anchor = c.slope >= 0 ? 'start' : 'end';
-            parts.push(`<text class="champ-label" x="${tx}" y="${cy + 3}" text-anchor="${anchor}">${c.champion}</text>`);
+            const cls = matchupMode
+                ? `matchup-label`
+                : 'champ-label';
+            const color = matchupMode
+                ? (p.side === 'blue' ? '#60a5fa' : '#fb7185')
+                : '';
+            const fillAttr = color ? ` fill="${color}"` : '';
+            parts.push(`<text class="${cls}" x="${tx}" y="${cy + 3}" text-anchor="${anchor}"${fillAttr}>${c.champion}</text>`);
         }
 
         svg.innerHTML = parts.join('');
@@ -852,11 +908,13 @@
 
         function showTooltip(dot, e) {
             const name = dot.getAttribute('data-champ');
-            const c = plottable.find(p => p.champion === name);
-            if (!c) return;
+            const p = plottable.find(p => p.champ.champion === name);
+            if (!p) return;
+            const c = p.champ;
             const sign = v => (v > 0 ? '+' : '') + v;
+            const roleHtml = `<span class="tt-role">${ROLE_LABEL[c.role] || c.role || '—'}</span>`;
             tooltip.innerHTML = `
-                <div class="tt-name">${c.champion} <span class="tt-role">${ROLE_LABEL[c.role] || c.role || '—'}</span></div>
+                <div class="tt-name">${c.champion} ${roleHtml}</div>
                 <div class="tt-row"><span>Games</span><b>${c.n}</b></div>
                 <div class="tt-row"><span>Win rate</span><b>${c.wr.toFixed(1)}%</b></div>
                 <div class="tt-row"><span>Δ (p25 → p75)</span><b>${sign(c.delta.toFixed(1))}</b></div>
@@ -883,14 +941,26 @@
             tooltip.classList.remove('show');
         }
 
-        // Render legend
+        // Render legend — team colors in matchup mode, roles otherwise.
         const legend = document.getElementById('scaling-chart-legend');
-        legend.innerHTML = ['top','jng','mid','bot','sup'].map(r =>
-            `<span class="scaling-legend-item">
-                <span class="scaling-legend-swatch" style="background:${ROLE_COLOR[r]}"></span>
-                ${ROLE_LABEL[r]}
-            </span>`
-        ).join('') + `<span class="scaling-legend-item" style="margin-left:18px; color:var(--text-muted)">dot size = sample N</span>`;
+        if (matchupMode) {
+            legend.innerHTML = `
+                <span class="scaling-legend-item">
+                    <span class="scaling-legend-swatch" style="background:#60a5fa"></span>
+                    Blue Team
+                </span>
+                <span class="scaling-legend-item">
+                    <span class="scaling-legend-swatch" style="background:#fb7185"></span>
+                    Red Team
+                </span>`;
+        } else {
+            legend.innerHTML = ['top','jng','mid','bot','sup'].map(r =>
+                `<span class="scaling-legend-item">
+                    <span class="scaling-legend-swatch" style="background:${ROLE_COLOR[r]}"></span>
+                    ${ROLE_LABEL[r]}
+                </span>`
+            ).join('') + `<span class="scaling-legend-item" style="margin-left:18px; color:var(--text-muted)">dot size = sample N</span>`;
+        }
     }
 
     function setupScalingTab() {
@@ -898,6 +968,27 @@
         document.getElementById('scaling-refresh').addEventListener('click', fetchScaling);
         document.getElementById('scaling-search').addEventListener('input', renderScaling);
         document.getElementById('scaling-min-n').addEventListener('change', renderScaling);
+
+        // Matchup picker: autocomplete on each of the 10 inputs, re-render
+        // chart on every keystroke / selection. Picks bypass table filters.
+        document.querySelectorAll('.scaling-pick-input').forEach(input => {
+            setupAutocomplete(input, () => state.ac ? state.ac.champions : [], () => {
+                renderScaling();
+                // Auto-focus next empty input on the same side
+                const side = input.dataset.side;
+                const peers = document.querySelectorAll(`.scaling-pick-input[data-side="${side}"]`);
+                for (const p of peers) {
+                    if (!p.value.trim() && p !== input) { p.focus(); return; }
+                }
+            });
+            input.addEventListener('input', () => {
+                if (!input.value.trim()) renderScaling();
+            });
+        });
+        document.getElementById('scaling-pick-clear').addEventListener('click', () => {
+            document.querySelectorAll('.scaling-pick-input').forEach(i => i.value = '');
+            renderScaling();
+        });
 
         document.getElementById('scaling-role-filter').addEventListener('click', (e) => {
             const btn = e.target.closest('.role-btn');
