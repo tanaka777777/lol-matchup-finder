@@ -126,6 +126,121 @@ body {
 .scaling-table tbody tr { cursor: default; }
 .scaling-table tbody tr:hover { background: var(--bg-hover); }
 
+.role-tag {
+    display: inline-block;
+    font-family: var(--font-data); font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 3px;
+    color: var(--text-secondary); background: var(--bg-elevated);
+    text-transform: uppercase; letter-spacing: 0.05em;
+}
+
+.role-filter { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.role-btn {
+    font-family: var(--font-ui); font-size: 12px; font-weight: 600;
+    color: var(--text-secondary); background: var(--bg-elevated);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    padding: 6px 14px; cursor: pointer;
+    transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+
+.role-btn:hover { color: var(--text); background: var(--bg-hover); }
+
+.role-btn.active {
+    color: var(--cyan); background: var(--cyan-dim);
+    border-color: var(--cyan);
+}
+
+/* ── Scaling chart ── */
+.scaling-chart-wrap {
+    position: relative;
+    padding: 16px 18px 12px;
+}
+
+#scaling-chart {
+    display: block; width: 100%; height: auto;
+}
+
+#scaling-chart .axis-line {
+    stroke: var(--border); stroke-width: 1;
+}
+#scaling-chart .grid-line {
+    stroke: var(--border-subtle); stroke-width: 1; stroke-dasharray: 2 4;
+}
+#scaling-chart .neutral-line {
+    stroke: var(--text-muted); stroke-width: 1; stroke-dasharray: 4 4; opacity: 0.6;
+}
+#scaling-chart .axis-label {
+    font-family: var(--font-ui); font-size: 11px; font-weight: 600;
+    fill: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.08em;
+}
+#scaling-chart .tick-label {
+    font-family: var(--font-data); font-size: 10px; fill: var(--text-muted);
+}
+#scaling-chart .quad-label {
+    font-family: var(--font-ui); font-size: 10px; font-weight: 600;
+    fill: var(--text-muted); opacity: 0.5; letter-spacing: 0.04em;
+}
+#scaling-chart .champ-label {
+    font-family: var(--font-ui); font-size: 10px; font-weight: 600;
+    fill: var(--text); pointer-events: none;
+}
+#scaling-chart .dot {
+    cursor: pointer; transition: stroke-width 0.1s, opacity 0.15s;
+    stroke: rgba(0,0,0,0.35); stroke-width: 1;
+}
+#scaling-chart .dot:hover { stroke-width: 2.5; }
+#scaling-chart.has-hover .dot:not(.hover) { opacity: 0.25; }
+#scaling-chart .dot.hover { stroke: var(--text); stroke-width: 2; }
+
+.scaling-chart-legend {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    padding: 8px 0 0; margin-top: 4px;
+    border-top: 1px solid var(--border-subtle);
+    justify-content: center;
+}
+.scaling-legend-item {
+    display: flex; align-items: center; gap: 6px;
+    font-family: var(--font-ui); font-size: 11px; font-weight: 600;
+    color: var(--text-secondary); letter-spacing: 0.04em;
+}
+.scaling-legend-swatch {
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.35);
+}
+
+.scaling-tooltip {
+    position: absolute; top: 0; left: 0;
+    pointer-events: none; opacity: 0;
+    background: rgba(21, 28, 40, 0.97);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 12px; min-width: 160px;
+    font-family: var(--font-data); font-size: 11px;
+    color: var(--text); z-index: 30;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    transition: opacity 0.1s;
+}
+.scaling-tooltip.show { opacity: 1; }
+.scaling-tooltip .tt-name {
+    font-family: var(--font-ui); font-size: 13px; font-weight: 700;
+    color: var(--text); margin-bottom: 4px;
+    display: flex; justify-content: space-between; gap: 12px; align-items: center;
+}
+.scaling-tooltip .tt-role {
+    font-size: 10px; padding: 2px 7px; border-radius: 3px;
+    background: var(--bg-elevated); color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.05em;
+}
+.scaling-tooltip .tt-row {
+    display: flex; justify-content: space-between; gap: 16px;
+    color: var(--text-secondary); padding: 1px 0;
+}
+.scaling-tooltip .tt-row b {
+    color: var(--text); font-weight: 600;
+}
+
 /* ── Main ── */
 .main-container { max-width: 1100px; margin: 0 auto; padding: 20px 24px 40px; }
 

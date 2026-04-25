@@ -533,7 +533,18 @@
         data: null,
         sortKey: 'delta',
         sortDir: 'desc',
+        roleFilter: '',  // '' = all roles
         initialized: false,
+    };
+
+    const ROLE_LABEL = { top: 'Top', jng: 'Jng', mid: 'Mid', bot: 'Bot', sup: 'Sup' };
+    // Roughly the existing palette — distinct hues per role, picked to read on dark bg.
+    const ROLE_COLOR = {
+        top: '#fbbf24',  // amber
+        jng: '#34d399',  // emerald
+        mid: '#22d3ee',  // cyan
+        bot: '#fb7185',  // red-side rose
+        sup: '#a78bfa',  // violet
     };
 
     // Parallel league filter — separate from the matchup one so the user can
@@ -649,6 +660,9 @@
         let rows = data.champions;
         if (search) rows = rows.filter(c => c.champion.toLowerCase().includes(search));
         if (minN) rows = rows.filter(c => c.n >= 100);
+        if (scalingState.roleFilter) {
+            rows = rows.filter(c => c.role === scalingState.roleFilter);
+        }
 
         const key = scalingState.sortKey;
         const dir = scalingState.sortDir === 'asc' ? 1 : -1;
@@ -663,15 +677,17 @@
 
         const tbody = document.getElementById('scaling-body');
         if (!rows.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="padding: 24px; color: var(--text-muted);">No champions match</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="9" class="empty-state" style="padding: 24px; color: var(--text-muted);">No champions match</td></tr>';
         } else {
             tbody.innerHTML = rows.map(c => {
                 const dCls = c.delta === null ? 'dim' : c.delta > 0 ? 'delta-pos' : c.delta < 0 ? 'delta-neg' : '';
                 const sCls = c.slope === null ? 'dim' : c.slope > 0 ? 'delta-pos' : c.slope < 0 ? 'delta-neg' : '';
                 const fmtSigned = (v, d) => v === null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d);
                 const fmtPct = v => v === null ? '—' : v.toFixed(1) + '%';
+                const roleLabel = c.role ? (ROLE_LABEL[c.role] || c.role) : '—';
                 return `<tr>
                     <td class="al">${c.champion}</td>
+                    <td><span class="role-tag">${roleLabel}</span></td>
                     <td>${c.n}</td>
                     <td>${c.wr.toFixed(1)}%</td>
                     <td>${fmtPct(c.wr_p25)}</td>
@@ -690,6 +706,191 @@
                 if (scalingState.sortDir === 'asc') th.classList.add('asc');
             }
         });
+
+        renderScalingChart(rows);
+    }
+
+    // ── Scatter: slope (x) vs WR (y), colored by role, sized by N ──
+    // Renders the SAME post-filter rows as the table so user controls (role,
+    // search, min-N) drive both views in lockstep.
+    function renderScalingChart(rows) {
+        const svg = document.getElementById('scaling-chart');
+        const tooltip = document.getElementById('scaling-tooltip');
+        const meta = document.getElementById('scaling-chart-count');
+
+        // Plot only champs with a fitted slope. Sometimes N>=100 but the OLS
+        // returned null (degenerate variance) — skip those silently.
+        const plottable = rows.filter(r => r.slope !== null && r.wr !== null);
+        meta.textContent = `${plottable.length} champ${plottable.length === 1 ? '' : 's'} plotted`;
+
+        const W = 880, H = 480;
+        const M = { top: 24, right: 28, bottom: 56, left: 64 };
+        const innerW = W - M.left - M.right;
+        const innerH = H - M.top - M.bottom;
+
+        if (!plottable.length) {
+            svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" class="axis-label">No data to plot</text>`;
+            return;
+        }
+
+        // Symmetric x-domain around 0 so neutral=center; padded slightly.
+        const slopes = plottable.map(r => r.slope);
+        const wrs = plottable.map(r => r.wr);
+        const sMax = Math.max(0.5, ...slopes.map(Math.abs)) * 1.1;
+        const xMin = -sMax, xMax = sMax;
+        // Y-domain: WR range with padding, but always include 50%.
+        const wrLo = Math.min(45, ...wrs) - 2;
+        const wrHi = Math.max(55, ...wrs) + 2;
+
+        const x = v => M.left + ((v - xMin) / (xMax - xMin)) * innerW;
+        const y = v => M.top + (1 - (v - wrLo) / (wrHi - wrLo)) * innerH;
+        const r = n => Math.max(3.5, Math.min(14, Math.sqrt(n) * 0.45));
+
+        // Build x-tick values (rounded). Pick step that gives ~6 ticks.
+        function niceTicks(lo, hi, target) {
+            const span = hi - lo;
+            const raw = span / target;
+            const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+            const norm = raw / mag;
+            const step = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+            const ticks = [];
+            const start = Math.ceil(lo / step) * step;
+            for (let v = start; v <= hi + 1e-9; v += step) ticks.push(+v.toFixed(6));
+            return ticks;
+        }
+        const xTicks = niceTicks(xMin, xMax, 7);
+        const yTicks = niceTicks(wrLo, wrHi, 6);
+
+        // Build SVG content
+        const parts = [];
+
+        // Gridlines
+        for (const xv of xTicks) {
+            parts.push(`<line class="grid-line" x1="${x(xv)}" y1="${M.top}" x2="${x(xv)}" y2="${M.top + innerH}"/>`);
+        }
+        for (const yv of yTicks) {
+            parts.push(`<line class="grid-line" x1="${M.left}" y1="${y(yv)}" x2="${M.left + innerW}" y2="${y(yv)}"/>`);
+        }
+
+        // Quadrant-defining neutral lines: slope=0 and WR=50
+        if (xMin <= 0 && xMax >= 0) {
+            parts.push(`<line class="neutral-line" x1="${x(0)}" y1="${M.top}" x2="${x(0)}" y2="${M.top + innerH}"/>`);
+        }
+        if (wrLo <= 50 && wrHi >= 50) {
+            parts.push(`<line class="neutral-line" x1="${M.left}" y1="${y(50)}" x2="${M.left + innerW}" y2="${y(50)}"/>`);
+        }
+
+        // Axis frame
+        parts.push(`<line class="axis-line" x1="${M.left}" y1="${M.top + innerH}" x2="${M.left + innerW}" y2="${M.top + innerH}"/>`);
+        parts.push(`<line class="axis-line" x1="${M.left}" y1="${M.top}" x2="${M.left}" y2="${M.top + innerH}"/>`);
+
+        // Tick labels
+        for (const xv of xTicks) {
+            const sign = xv > 0 ? '+' : '';
+            parts.push(`<text class="tick-label" x="${x(xv)}" y="${M.top + innerH + 14}" text-anchor="middle">${sign}${xv}</text>`);
+        }
+        for (const yv of yTicks) {
+            parts.push(`<text class="tick-label" x="${M.left - 8}" y="${y(yv) + 3}" text-anchor="end">${yv}%</text>`);
+        }
+
+        // Axis titles
+        parts.push(`<text class="axis-label" x="${M.left + innerW/2}" y="${H - 14}" text-anchor="middle">Slope (WR % per minute) — left = falls off, right = scales</text>`);
+        parts.push(`<text class="axis-label" x="${-(M.top + innerH/2)}" y="18" transform="rotate(-90)" text-anchor="middle">Overall Win Rate</text>`);
+
+        // Quadrant labels (only if we straddle both neutral lines)
+        if (xMin < 0 && xMax > 0 && wrLo < 50 && wrHi > 50) {
+            parts.push(`<text class="quad-label" x="${M.left + innerW - 6}" y="${M.top + 14}" text-anchor="end">GOOD &amp; SCALES ↗</text>`);
+            parts.push(`<text class="quad-label" x="${M.left + 6}" y="${M.top + 14}">↖ GOOD EARLY</text>`);
+            parts.push(`<text class="quad-label" x="${M.left + innerW - 6}" y="${M.top + innerH - 6}" text-anchor="end">SCALES BUT WEAK ↘</text>`);
+            parts.push(`<text class="quad-label" x="${M.left + 6}" y="${M.top + innerH - 6}">↙ STRUGGLING</text>`);
+        }
+
+        // Sort dots by N ascending so big dots paint on top of small ones
+        const sorted = [...plottable].sort((a, b) => a.n - b.n);
+        for (const c of sorted) {
+            const cx = x(c.slope), cy = y(c.wr), rad = r(c.n);
+            const fill = ROLE_COLOR[c.role] || '#888';
+            parts.push(
+                `<circle class="dot" data-champ="${c.champion.replace(/"/g, '&quot;')}" ` +
+                `cx="${cx}" cy="${cy}" r="${rad}" fill="${fill}" fill-opacity="0.78"/>`
+            );
+        }
+
+        // Auto-label the most extreme champs (top 3 each direction by |delta|)
+        // — only if there's room. Keeps the chart readable without manually
+        // searching for every name.
+        const labeled = new Set();
+        const sortedByDelta = [...plottable].sort((a, b) => b.delta - a.delta);
+        const extremes = [...sortedByDelta.slice(0, 3), ...sortedByDelta.slice(-3)];
+        for (const c of extremes) {
+            if (labeled.has(c.champion)) continue;
+            labeled.add(c.champion);
+            const cx = x(c.slope), cy = y(c.wr), rad = r(c.n);
+            const tx = c.slope >= 0 ? cx + rad + 4 : cx - rad - 4;
+            const anchor = c.slope >= 0 ? 'start' : 'end';
+            parts.push(`<text class="champ-label" x="${tx}" y="${cy + 3}" text-anchor="${anchor}">${c.champion}</text>`);
+        }
+
+        svg.innerHTML = parts.join('');
+
+        // Tooltip + hover handling
+        svg.addEventListener('mouseleave', hideTooltip);
+        svg.querySelectorAll('.dot').forEach(dot => {
+            dot.addEventListener('mouseenter', (e) => {
+                svg.classList.add('has-hover');
+                svg.querySelectorAll('.dot.hover').forEach(d => d.classList.remove('hover'));
+                dot.classList.add('hover');
+                showTooltip(dot, e);
+            });
+            dot.addEventListener('mousemove', (e) => positionTooltip(e));
+            dot.addEventListener('mouseleave', () => {
+                dot.classList.remove('hover');
+                svg.classList.remove('has-hover');
+                hideTooltip();
+            });
+        });
+
+        function showTooltip(dot, e) {
+            const name = dot.getAttribute('data-champ');
+            const c = plottable.find(p => p.champion === name);
+            if (!c) return;
+            const sign = v => (v > 0 ? '+' : '') + v;
+            tooltip.innerHTML = `
+                <div class="tt-name">${c.champion} <span class="tt-role">${ROLE_LABEL[c.role] || c.role || '—'}</span></div>
+                <div class="tt-row"><span>Games</span><b>${c.n}</b></div>
+                <div class="tt-row"><span>Win rate</span><b>${c.wr.toFixed(1)}%</b></div>
+                <div class="tt-row"><span>Δ (p25 → p75)</span><b>${sign(c.delta.toFixed(1))}</b></div>
+                <div class="tt-row"><span>Slope</span><b>${sign(c.slope.toFixed(2))} %/min</b></div>
+                <div class="tt-row"><span>p-value</span><b>${c.pvalue.toFixed(3)}</b></div>
+            `;
+            tooltip.classList.add('show');
+            positionTooltip(e);
+        }
+
+        function positionTooltip(e) {
+            const wrap = tooltip.parentElement.getBoundingClientRect();
+            const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+            let left = e.clientX - wrap.left + 14;
+            let top = e.clientY - wrap.top + 14;
+            // Keep tooltip inside the wrap
+            if (left + tw > wrap.width - 8) left = e.clientX - wrap.left - tw - 14;
+            if (top + th > wrap.height - 8) top = e.clientY - wrap.top - th - 14;
+            tooltip.style.left = left + 'px';
+            tooltip.style.top = top + 'px';
+        }
+
+        function hideTooltip() {
+            tooltip.classList.remove('show');
+        }
+
+        // Render legend
+        const legend = document.getElementById('scaling-chart-legend');
+        legend.innerHTML = ['top','jng','mid','bot','sup'].map(r =>
+            `<span class="scaling-legend-item">
+                <span class="scaling-legend-swatch" style="background:${ROLE_COLOR[r]}"></span>
+                ${ROLE_LABEL[r]}
+            </span>`
+        ).join('') + `<span class="scaling-legend-item" style="margin-left:18px; color:var(--text-muted)">dot size = sample N</span>`;
     }
 
     function setupScalingTab() {
@@ -697,6 +898,16 @@
         document.getElementById('scaling-refresh').addEventListener('click', fetchScaling);
         document.getElementById('scaling-search').addEventListener('input', renderScaling);
         document.getElementById('scaling-min-n').addEventListener('change', renderScaling);
+
+        document.getElementById('scaling-role-filter').addEventListener('click', (e) => {
+            const btn = e.target.closest('.role-btn');
+            if (!btn) return;
+            scalingState.roleFilter = btn.dataset.role;
+            document.querySelectorAll('#scaling-role-filter .role-btn').forEach(
+                b => b.classList.toggle('active', b === btn)
+            );
+            renderScaling();
+        });
 
         document.querySelectorAll('.scaling-table thead th[data-sort]').forEach(th => {
             th.addEventListener('click', () => {

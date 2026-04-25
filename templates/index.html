@@ -157,12 +157,24 @@
         </div>
     </div>
 
+    <div class="panel" style="margin-top: 16px; padding: 12px 18px;">
+        <div class="role-filter" id="scaling-role-filter">
+            <button class="role-btn active" data-role="">All</button>
+            <button class="role-btn" data-role="top">Top</button>
+            <button class="role-btn" data-role="jng">Jungle</button>
+            <button class="role-btn" data-role="mid">Mid</button>
+            <button class="role-btn" data-role="bot">Bot</button>
+            <button class="role-btn" data-role="sup">Support</button>
+        </div>
+    </div>
+
     <div class="panel" id="scaling-panel" style="margin-top: 16px;">
         <div class="table-scroll" style="max-height: 75vh;">
             <table class="dtable scaling-table" id="scaling-table">
                 <thead>
                     <tr>
                         <th class="al" data-sort="champion">Champion</th>
+                        <th data-sort="role">Role</th>
                         <th data-sort="n">N</th>
                         <th data-sort="wr">WR</th>
                         <th data-sort="wr_p25" id="th-wr-p25">WR @ p25</th>
@@ -174,6 +186,18 @@
                 </thead>
                 <tbody id="scaling-body"></tbody>
             </table>
+        </div>
+    </div>
+
+    <div class="panel" id="scaling-chart-panel" style="margin-top: 16px;">
+        <div class="panel-head">
+            <span class="panel-title">Scaling vs Win Rate</span>
+            <span class="panel-meta" id="scaling-chart-count">—</span>
+        </div>
+        <div class="scaling-chart-wrap">
+            <svg id="scaling-chart" viewBox="0 0 880 480" preserveAspectRatio="xMidYMid meet"></svg>
+            <div class="scaling-chart-legend" id="scaling-chart-legend"></div>
+            <div class="scaling-tooltip" id="scaling-tooltip"></div>
         </div>
     </div>
 </div>

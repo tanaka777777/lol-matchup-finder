@@ -556,7 +556,7 @@ def champion_scaling():
     sql_params = list(leagues)
     league_ph = ','.join('?' * len(leagues))
     sql = (
-        "SELECT champion, gamelength, result FROM rows "
+        "SELECT champion, gamelength, result, position FROM rows "
         "WHERE participantid BETWEEN 1 AND 10 "
         "AND champion IS NOT NULL AND champion != '' "
         "AND gamelength IS NOT NULL AND gamelength > 0 "
@@ -584,8 +584,9 @@ def champion_scaling():
     p25_min = gls[int(n_total * 0.25)]
     p75_min = gls[int(n_total * 0.75)]
 
-    by_champ = {}
-    for champ, gl_sec, result in rows:
+    by_champ = {}      # champ → list of (gl_min, result)
+    pos_counts = {}    # champ → {position: count}
+    for champ, gl_sec, result, position in rows:
         try:
             gl_min = float(gl_sec) / 60.0
             r = int(result)
@@ -596,14 +597,24 @@ def champion_scaling():
             bucket = []
             by_champ[champ] = bucket
         bucket.append((gl_min, r))
+        if position:
+            pc = pos_counts.get(champ)
+            if pc is None:
+                pc = {}
+                pos_counts[champ] = pc
+            pc[position] = pc.get(position, 0) + 1
 
     MIN_N = 30  # below this the OLS slope SE is too unstable to report
     out = []
     for champ, pts in by_champ.items():
         n = len(pts)
         wr = sum(y for _, y in pts) / n
+        # Primary role = most-played position for this champ in the filtered slice
+        pc = pos_counts.get(champ) or {}
+        role = max(pc, key=pc.get) if pc else None
         entry = {
             'champion': champ,
+            'role': role,
             'n': n,
             'wr': round(100 * wr, 1),
             'wr_p25': None, 'wr_p75': None,
